@@ -71,7 +71,7 @@ From the **secret** flake with the public path input overridden:
 
 ```
 nix build --impure --no-link --print-out-paths \
-  --override-input nix-kyaru path:/home/kyaru/Projects/nix --no-write-lock-file \
+  --override-input nix-kyaru path:/home/kyaru/Projects/nix-kyaru --no-write-lock-file \
   .#nixosConfigurations.lucent-academy.config.specialisation.el2-cxsd.configuration.system.build.toplevel
 ```
 

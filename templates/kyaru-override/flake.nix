@@ -2,7 +2,7 @@
   description = "Extended flake from kyaru";
 
   inputs = {
-    nix-kyaru.url = "github:KiruyaMomochi/nix";
+    nix-kyaru.url = "github:KiruyaMomochi/nix-kyaru";
     nixpkgs.follows = "nix-kyaru/nixpkgs";
   };
 

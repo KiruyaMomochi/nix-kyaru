@@ -31,7 +31,7 @@ nix build --impure --no-link --print-out-paths --expr '
   let
     secret = builtins.getFlake "/home/kyaru/Projects/nix-kyaru-secret";
     pkgs = import secret.inputs.nix-kyaru.inputs.nixpkgs { system = "x86_64-linux"; };
-  in pkgs.callPackage /home/kyaru/Projects/nix/nixosConfigurations/lucent-academy/el2/launcher.nix {
+  in pkgs.callPackage /home/kyaru/Projects/nix-kyaru/nixosConfigurations/lucent-academy/el2/launcher.nix {
     bootPartuuid = "11111111-2222-3333-4444-555555555555";
     ukiPath = "/EFI/nixos/validation-only-el2.efi";
   }'

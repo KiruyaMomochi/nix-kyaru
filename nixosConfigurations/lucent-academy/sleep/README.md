@@ -84,7 +84,7 @@ of `v7.3` (merge-base equals the queried commit, compare status `ahead`).
   No failed hunks; only line offsets on SoundWire, hamoa and PCIe.
 - Confirmed restored LPASS files match pristine v7.3 byte-for-byte.
 - Evaluated from the secret flake using `--override-input nix-kyaru
-  path:/home/kyaru/Projects/nix --no-write-lock-file` and an `extendModules`
+  path:/home/kyaru/Projects/nix-kyaru --no-write-lock-file` and an `extendModules`
   expression importing sleep.nix. Enabled kernel drvPath and the two default
   module drvPaths evaluate; actual kernel.patches contains the vendor series
   followed by the five sleep patches. All optional settings also evaluate,

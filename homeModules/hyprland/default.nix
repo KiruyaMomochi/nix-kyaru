@@ -14,7 +14,7 @@ in
 
     repo = mkOption {
       type = types.str;
-      default = "${config.home.homeDirectory}/Projects/nix";
+      default = "${config.home.homeDirectory}/Projects/nix-kyaru";
       description = ''
         Checkout of this repo on the machine. hyprland.lua is linked from
         here instead of the store, so edits apply on `hyprctl reload`
