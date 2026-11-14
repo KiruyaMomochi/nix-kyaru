@@ -47,8 +47,10 @@ in
       })
       keepassxc
       (google-chrome.override {
-        # Pinned so cookies stay readable outside Plasma (Hyprland would pick basic).
-        commandLineArgs = "--enable-features=WebUIDarkMode --force-dark-mode --disable-features=UserAgentClientHint --password-store=kwallet6 ${chromiumArgs}";
+        # Pinned so cookies stay readable on any desktop (Hyprland would pick basic).
+        # Moving a machine off kwallet6: copy kwallet's "Chrome Keys/Chrome Safe Storage"
+        # into a Secret Service item (application=chrome) first, or cookies are lost.
+        commandLineArgs = "--enable-features=WebUIDarkMode --force-dark-mode --disable-features=UserAgentClientHint --password-store=gnome-libsecret ${chromiumArgs}";
       })
       # goldendict-ng
       ddcui
