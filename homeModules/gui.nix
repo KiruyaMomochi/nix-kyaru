@@ -12,10 +12,24 @@ let
   # text-input also tells KWin when a text field is focused, which the
   # on-screen keyboard's touch-to-show relies on.
   chromiumWayland = "--ozone-platform=wayland --enable-wayland-ime --wayland-text-input-version=3";
+
+  # Chrome's own services (sync, the passkey security domain) use the system network
+  # context, which ignores proxy extensions; without this they go direct and hang behind
+  # the GFW. Extensions still override it for normal browsing. The wrapper pastes these
+  # into a shell script verbatim, hence the quotes around the bypass list.
+  chromiumArgs = lib.concatStringsSep " " ([ chromiumWayland ]
+    ++ lib.optional (cfg.chromiumProxy != null)
+      "--proxy-server=${cfg.chromiumProxy} '--proxy-bypass-list=<local>;100.64.0.0/10;*.ts.net'");
 in
 {
   options.programs.kyaru.desktop = {
     enable = lib.mkEnableOption "Kiruya's desktop packages";
+    chromiumProxy = lib.mkOption {
+      type = with lib.types; nullOr str;
+      default = null;
+      example = "http://127.0.0.1:3090";
+      description = "Default proxy for Chrome and Edge, below whatever a proxy extension sets.";
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -29,12 +43,12 @@ in
       # zotero 10.0.4 fails to build on nixpkgs 2026-10-07 (NixOS/nixpkgs#569006); unused for now
       # zotero
       (microsoft-edge.override {
-        commandLineArgs = chromiumWayland;
+        commandLineArgs = chromiumArgs;
       })
       keepassxc
       (google-chrome.override {
         # Pinned so cookies stay readable outside Plasma (Hyprland would pick basic).
-        commandLineArgs = "--enable-features=WebUIDarkMode --force-dark-mode --disable-features=UserAgentClientHint --password-store=kwallet6 ${chromiumWayland}";
+        commandLineArgs = "--enable-features=WebUIDarkMode --force-dark-mode --disable-features=UserAgentClientHint --password-store=kwallet6 ${chromiumArgs}";
       })
       # goldendict-ng
       ddcui
