@@ -13,6 +13,17 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    # KDE caches each app's Exec line (an absolute store path) in ksycoca and doesn't see
+    # ~/.nix-profile move to a new generation, so the menu keeps launching old wrappers.
+    # Rebuild it with the Plasma session's XDG_DATA_DIRS (the cache file is keyed on it);
+    # with no session running there is nothing to refresh.
+    home.activation.kbuildsycoca = lib.hm.dag.entryAfter [ "linkGeneration" ] ''
+      dataDirs=$(${pkgs.systemd}/bin/systemctl --user show-environment 2>/dev/null \
+        | ${pkgs.gnused}/bin/sed -n 's/^XDG_DATA_DIRS=//p')
+      if [ -n "$dataDirs" ]; then
+        run env XDG_DATA_DIRS="$dataDirs" ${pkgs.kdePackages.kservice}/bin/kbuildsycoca6 >/dev/null 2>&1 || true
+      fi
+    '';
     # https://wiki.nixos.org/w/index.php?title=KDE
     home.packages = (with pkgs; [
       krita
