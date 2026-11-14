@@ -50,6 +50,15 @@ in
 {
   environment.systemPackages = [ script ];
 
+  # Auto-rotation only runs in tablet mode. The panel is natively portrait
+  # (panel_orientation=right_side_up), and iio-sensor-proxy only maps the
+  # MXC6655 to it with a mount matrix; without one tablet mode rotates a
+  # quarter turn off. Matrix from systemd issue #41036 for this model.
+  services.udev.extraHwdb = ''
+    sensor:modalias:acpi:MXC6655*:dmi:*:svnGPD:pnG1628-04:*
+     ACCEL_MOUNT_MATRIX=0, 1, 0; 1, 0, 0; 0, 0, -1
+  '';
+
   systemd.user.services.tablet-mode-toggle = {
     description = "Toggle KWin tablet mode";
     serviceConfig = {
