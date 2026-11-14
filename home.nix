@@ -96,6 +96,7 @@
       (writeShellScriptBin "opencode" (builtins.readFile ./scripts/opencode-wrapper.sh))
       (writeShellScriptBin "claude" (builtins.readFile ./scripts/claude-wrapper.sh))
       (writeShellScriptBin "pi" (builtins.readFile ./scripts/pi-wrapper.sh))
+      (writeShellScriptBin "agy" (builtins.readFile ./scripts/agy-wrapper.sh))
       agent-browser
       d2
     ])
