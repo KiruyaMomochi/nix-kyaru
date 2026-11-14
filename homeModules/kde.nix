@@ -28,7 +28,7 @@ in
     home.packages = (with pkgs; [
       krita
       qalculate-qt
-      libreoffice-qt
+      onlyoffice-desktopeditors
       hunspell
       hunspellDicts.en-us-large
       qbittorrent # qbittorrent-enhanced
