@@ -39,6 +39,11 @@ I use [guild names](https://princess-connect.fandom.com/wiki/Guilds) from the ga
   - Los Angeles, United States
   - 1C 1G 20G, AMD Epyc 9654 @ 2.00 GHz
   - 39.90 USD / year => 3.32 USD / month
+- **[暮光流星群](./twilight-caravan/default.nix)** - Boil
+  - Taichung, Taiwan
+  - 1C 1G 16G, Intel Core i9-12900K @ 3.187GHz
+  - 99.00 USD / quarter => 33.00 USD / month
+  - Next due: 02/16/2027
 
 ### Removed
 
