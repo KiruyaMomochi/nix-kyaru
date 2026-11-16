@@ -140,7 +140,7 @@ format = "[$symbol( $number)]($style) "
 style = "blue"
 
 [character]
-success_symbol = "[❯](bold purple)"
+success_symbol = "[❯](bold bright-purple)"
 error_symbol = "[❯](bold red)"
 vimcmd_symbol = "[❮](bold green)"
 vimcmd_replace_one_symbol = "[❮](bold purple)"
