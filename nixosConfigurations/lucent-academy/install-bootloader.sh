@@ -37,6 +37,8 @@ mapfile -t gens < <(find /nix/var/nix/profiles -maxdepth 1 -name 'system-*-link'
 # volume). The launcher has the UKI path compiled in, so the newest el2 UKI is copied to
 # that one name; generations are walked oldest first, so the last call wins.
 el2_installed=""
+el2_gen=""
+current_gen=""
 planning=""
 install_el2() {
   local g=$1 top=$2 uki=$3 fw f src
@@ -61,13 +63,14 @@ install_el2() {
   cp "$uki" "$xbl/EFI/nixos/lucent-el2.efi.tmp"
   mv "$xbl/EFI/nixos/lucent-el2.efi.tmp" "$xbl/EFI/nixos/lucent-el2.efi"
   {
-    echo "title NixOS (el2-cxsd, experimental)"
+    echo "title NixOS (EL2)"
     echo "version Generation $g"
     echo "efi /EFI/el2/launcher.efi"
-    echo "sort-key nixos-zz-el2"
+    echo "sort-key lucent-el2"
   } > "$esp/loader/entries/lucent-el2.conf.tmp"
   mv "$esp/loader/entries/lucent-el2.conf.tmp" "$esp/loader/entries/lucent-el2.conf"
   el2_installed=1
+  el2_gen=$g
   echo "installed EL2 entry (generation $g)"
 }
 
@@ -126,7 +129,7 @@ install_all() {
   local g top s
   for g in "${gens[@]}"; do
     top=$(readlink -f "$profile-$g-link")
-    if [ "$top" = "$current" ]; then default="nixos-generation-$g.conf"; fi
+    if [ "$top" = "$current" ]; then default="nixos-generation-$g.conf"; current_gen=$g; fi
     install_one "$g" "$top"
     # Specialisations get their own UKI: with Secure Boot the stub won't take a
     # cmdline from the entry, so a different kernel-params needs a different image.
@@ -156,6 +159,10 @@ if [ -z "$el2_installed" ]; then
   rm -f "$esp/loader/entries/lucent-el2.conf" "$xbl/EFI/nixos/lucent-el2.efi"
 fi
 
+# EL2 is the daily boot (11-16: CXSD all night, 0.17 W). Only when its UKI comes from
+# the generation being installed, so rolling back to an older generation also
+# boots that generation's EL1 entry instead of a newer EL2 one.
+if [ -n "$el2_installed" ] && [ "$el2_gen" = "$current_gen" ]; then default="lucent-el2.conf"; fi
 if [ -z "$default" ]; then default="nixos-generation-${gens[-1]}.conf"; fi
 printf 'timeout 5\ndefault %s\nconsole-mode keep\n' "$default" > "$esp/loader/loader.conf.tmp"
 mv "$esp/loader/loader.conf.tmp" "$esp/loader/loader.conf"
