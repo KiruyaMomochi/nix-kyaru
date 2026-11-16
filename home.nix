@@ -290,8 +290,6 @@
         }
 
         $env.config.buffer_editor = "${config.programs.helix.package}/bin/hx"
-
-        hide-env --ignore-errors TRANSIENT_PROMPT_COMMAND_RIGHT
       ''
     ];
   };
@@ -326,15 +324,12 @@
     enableBashIntegration = false;
     enableFishIntegration = false;
     enableNushellIntegration = false;
-    enableTransience = true;
+    validateFiles.config = true;
     settings = builtins.fromTOML (builtins.readFile ./homeModules/starship/config.toml);
   };
-  programs.kyaru.starship.presets = [ "nerd-font-symbols" ];
-  # https://starship.rs/guide/#%F0%9F%9A%80-installation
   xdg.dataFile."nushell/vendor/autoload/starship.nu".source = pkgs.runCommand "starship.nu" { } ''
     ${config.programs.starship.package}/bin/starship init nu > $out
-    echo '$env.PROMPT_INDICATOR = "> "' >> $out
-    echo '$env.TRANSIENT_PROMPT_COMMAND = ""' >> $out
+    cat ${./homeModules/starship/transient.nu} >> $out
   '';
 
   # tmux

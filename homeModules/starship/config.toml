@@ -1,111 +1,164 @@
+add_newline = false
+
 format = """
 $username\
 $hostname\
-$localip\
-$shlvl\
-$singularity\
-$kubernetes\
+$container\
 $directory\
-$vcsh\
-$fossil_branch\
-$fossil_metrics\
 $git_branch\
 $git_commit\
 $git_state\
-$git_metrics\
 $git_status\
-$hg_branch\
-$pijul_channel\
-$docker_context\
-$package\
-$c\
-$cmake\
-$cobol\
-$daml\
-$dart\
-$deno\
-$dotnet\
-$elixir\
-$elm\
-$erlang\
-$fennel\
-$gleam\
-$golang\
-$guix_shell\
-$haskell\
-$haxe\
-$helm\
-$java\
-$julia\
-$kotlin\
-$gradle\
-$lua\
-$nim\
-$nodejs\
-$ocaml\
-$opa\
-$perl\
-$php\
-$pulumi\
-$purescript\
-$python\
-$quarto\
-$raku\
-$rlang\
-$red\
-$ruby\
-$rust\
-$scala\
-$solidity\
-$swift\
-$terraform\
-$typst\
-$vlang\
-$vagrant\
-$zig\
-$buf\
-$nix_shell\
-$conda\
-$meson\
-$spack\
-$memory_usage\
-$aws\
-$gcloud\
-$openstack\
-$azure\
-$nats\
 $direnv\
-$env_var\
-$crystal\
-$custom\
-$sudo\
-$line_break\r\
+$nix_shell\
+$rust\
+$python\
+$nodejs\
+$golang\
+$c\
+$zig\
+$lua\
+$line_break\
 $jobs\
-$battery\
-$os\
-$container\
-$shell\
 $character"""
 
-right_format = "$cmd_duration$time$status"
+right_format = "$status$cmd_duration$time"
 
-add_newline = false
+[username]
+format = "[$user]($style) "
+style_user = "purple"
+style_root = "bold red"
 
-[aws]
-disabled = true
+[hostname]
+ssh_symbol = " "
+format = "[$ssh_symbol$hostname]($style) "
+style = "bold yellow"
 
-[cmd_duration]
-format='[$duration]($style) '
-style = '8'
+[hostname.aliases]
+"sarendia-orphanage" = "saren"
+"lucent-academy" = "lucent"
+"mercurius-foundation" = "mercurius"
+"twilight-caravan" = "twilight"
+"twinkle-wish" = "twinkle"
+
+[container]
+symbol = " "
+format = "[$symbol$name]($style) "
+style = "yellow"
+
+[directory]
+style = "bold cyan"
+format = "[$path]($style)[$read_only]($read_only_style) "
+truncation_length = 4
+truncation_symbol = "…/"
+read_only = " 󰌾"
+read_only_style = "red"
+
+[git_branch]
+symbol = " "
+format = "[$symbol$branch(:$remote_branch)]($style) "
+style = "purple"
+
+[git_commit]
+format = '[\($hash$tag\)]($style) '
+style = "purple"
+tag_disabled = false
+tag_symbol = "  "
+
+[git_state]
+format = '[\($state( $progress_current/$progress_total)\)]($style) '
+style = "yellow"
+
+[git_status]
+format = "([$ahead_behind]($style) )([$conflicted](bold red) )([$staged](green) )([$modified](yellow) )([$renamed](blue) )([$deleted](red) )([$untracked](8) )([$stashed](8) )"
+style = "cyan"
+conflicted = "=${count}"
+ahead = "⇡${count}"
+behind = "⇣${count}"
+diverged = "⇡${ahead_count}⇣${behind_count}"
+staged = "+${count}"
+modified = "!${count}"
+renamed = "»${count}"
+deleted = "✘${count}"
+untracked = "?${count}"
+stashed = "*${count}"
+
+[direnv]
+disabled = false
+format = "[$loaded$allowed]($style) "
+style = "8"
+loaded_msg = "envrc"
+unloaded_msg = "!envrc"
+allowed_msg = ""
+not_allowed_msg = ":blocked"
+denied_msg = ":denied"
+
+[nix_shell]
+heuristic = true
+symbol = ""
+format = "[$symbol( $name)]($style) "
+style = "blue"
+
+[rust]
+version_format = "${major}.${minor}"
+format = "([󱘗 $version ]($style))"
+style = "8"
+
+[python]
+version_format = "${major}.${minor}"
+format = '([ ($version )(\($virtualenv\) )]($style))'
+style = "8"
+
+[nodejs]
+version_format = "${major}.${minor}"
+format = "([ $version ]($style))"
+style = "8"
+
+[golang]
+version_format = "${major}.${minor}"
+format = "([ $version ]($style))"
+style = "8"
+
+[c]
+version_format = "${major}.${minor}"
+format = "([ $version(-$name) ]($style))"
+style = "8"
+
+[zig]
+version_format = "${major}.${minor}"
+format = "([ $version ]($style))"
+style = "8"
+
+[lua]
+version_format = "${major}.${minor}"
+format = "([ $version ]($style))"
+style = "8"
+
+[jobs]
+symbol = "✦"
+format = "[$symbol( $number)]($style) "
+style = "blue"
+
+[character]
+success_symbol = "[❯](bold purple)"
+error_symbol = "[❯](bold red)"
+vimcmd_symbol = "[❮](bold green)"
+vimcmd_replace_one_symbol = "[❮](bold purple)"
+vimcmd_replace_symbol = "[❮](bold purple)"
+vimcmd_visual_symbol = "[❮](bold yellow)"
 
 [status]
 disabled = false
+format = "[✘ $status]($style) "
+style = "bold red"
 
-[character]
-# using nushell native character
-disabled = true
+[cmd_duration]
+min_time = 2000
+format = "[$duration]($style) "
+style = "yellow"
 
 [time]
 disabled = false
-format = '[$time]($style) '
-style = '8'
+time_format = "%H:%M:%S"
+format = "[$time]($style)"
+style = "8"
