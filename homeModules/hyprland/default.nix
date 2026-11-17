@@ -84,9 +84,9 @@ in
     # so `zen-twilight -P` + Enter just works (Ctrl+Enter forces it).
     programs.rofi = {
       enable = true;
-      font = "Sarasa UI SC 12";
-      terminal = "ghostty";
-      extraConfig = {
+      settings = {
+        font = "Sarasa UI SC 12";
+        terminal = "ghostty";
         modi = "combi,drun,run";
         combi-modes = "drun,run";
         combi-hide-mode-prefix = true;

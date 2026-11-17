@@ -28,12 +28,13 @@ in
     home.packages = (with pkgs; [
       krita
       qalculate-qt
-      onlyoffice-desktopeditors
       hunspell
       hunspellDicts.en-us-large
       qbittorrent # qbittorrent-enhanced
       kyaru.kwi
-    ]) ++ (with pkgs.kdePackages; [
+    ]) ++ lib.optionals pkgs.stdenv.hostPlatform.isx86_64 [
+      pkgs.onlyoffice-desktopeditors
+    ] ++ (with pkgs.kdePackages; [
       ark
       kcolorchooser
       kate
