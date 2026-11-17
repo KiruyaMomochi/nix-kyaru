@@ -108,7 +108,14 @@ in
           sarasa-gothic
           roboto
           nerd-fonts.monaspace
+          kyaru.maple-mono-nf-tc
         ];
+        fonts.fontconfig.defaultFonts = {
+          monospace = [
+            "Maple Mono NF TC"
+            "Sarasa Mono TC"
+          ];
+        };
         fonts.fontDir.enable = true;
         fonts.enableDefaultPackages = true;
 
