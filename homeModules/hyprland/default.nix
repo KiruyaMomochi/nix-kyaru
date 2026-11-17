@@ -80,22 +80,6 @@ in
       output_path = '${config.xdg.configHome}/dms/chrome-policy.json'
     '';
 
-    # combi = apps + run: text that matches no app runs as a command,
-    # so `zen-twilight -P` + Enter just works (Ctrl+Enter forces it).
-    programs.rofi = {
-      enable = true;
-      settings = {
-        font = "Sarasa UI SC 12";
-        terminal = "ghostty";
-        modi = "combi,drun,run";
-        combi-modes = "drun,run";
-        combi-hide-mode-prefix = true;
-        show-icons = true;
-        drun-display-format = "{name}";
-      };
-      theme = ./rofi.rasi;
-    };
-
     # Bind the hypr* user services to the uwsm Hyprland session only.
     # The default graphical-session.target is also up under Plasma.
     wayland.systemd.target = "wayland-session@hyprland.desktop.target";
