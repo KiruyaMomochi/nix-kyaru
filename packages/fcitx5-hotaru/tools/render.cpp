@@ -23,6 +23,10 @@ int main(int argc, char **argv) {
                            "腻", "逆", "倪", "妮", "拟", "匿", "溺", "霓",
                            "你好啊", "尼泊尔", "泥巴", "逆天"},
                           0});
+    } else if (mode == "terminal") {
+        kb.setLanguage(false);
+        kb.setTerminal(true);
+        kb.release(1000 + 2 + 2); // tap Ctrl once to show latched state
     } else if (mode == "symbols") {
         kb.release(3 * 16); // the layer key
     } else if (mode == "popup") {

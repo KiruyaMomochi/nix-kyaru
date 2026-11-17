@@ -11,9 +11,14 @@
 namespace hotaru {
 namespace {
 
+constexpr uint32_t Backspace = 0xff08;
+constexpr uint32_t Tab = 0xff09;
 constexpr uint32_t Return = 0xff0d;
+constexpr uint32_t Escape = 0xff1b;
 constexpr uint32_t Left = 0xff51;
+constexpr uint32_t Up = 0xff52;
 constexpr uint32_t Right = 0xff53;
+constexpr uint32_t Down = 0xff54;
 constexpr int RowStride = 16;
 // Keys in the strip above the letters, and in the menu.
 constexpr int BarBase = 1000;
@@ -322,6 +327,46 @@ bool drawIcon(cairo_t *cr, const std::string &name, double cx, double cy,
         cairo_line_to(cr, cx - r * 0.35, cy + r * 0.25);
         cairo_move_to(cr, cx - r * 0.7, cy + r * 0.75);
         cairo_line_to(cr, cx + r * 0.05, cy + r * 0.75);
+        cairo_stroke(cr);
+    } else if (name == "undo" || name == "redo") {
+        // U-turn arrow matching smiley's outer radius (r * 0.9).
+        const double R = r * 0.9;
+        const double dir = name == "undo" ? -1 : 1;
+        const double loopR = R * 0.56;
+        const double topY = cy - loopR * 0.72;
+        const double botY = topY + 2 * loopR;
+        const double arcCx = cx - dir * R * 0.18;
+        const double tipX = cx + dir * R * 0.78;
+        cairo_move_to(cr, tipX, topY);
+        cairo_line_to(cr, arcCx, topY);
+        if (dir < 0) {
+            cairo_arc(cr, arcCx, topY + loopR, loopR, -M_PI / 2, M_PI / 2);
+        } else {
+            cairo_arc_negative(cr, arcCx, topY + loopR, loopR, -M_PI / 2,
+                               M_PI / 2);
+        }
+        cairo_line_to(cr, cx + dir * R * 0.45, botY);
+        cairo_stroke(cr);
+        const double aw = R * 0.44;
+        cairo_move_to(cr, tipX - dir * aw, topY - aw * 0.88);
+        cairo_line_to(cr, tipX, topY);
+        cairo_line_to(cr, tipX - dir * aw, topY + aw * 0.88);
+        cairo_stroke(cr);
+    } else if (name == "paste") {
+        const double R = r * 0.9;
+        const double bw = R * 1.42, bh = R * 1.72;
+        const double cw = R * 0.72, ch = R * 0.42;
+        cairo_push_group(cr);
+        roundedRect(cr, cx - bw / 2, cy - R + R * 0.28, bw, bh, 3.0);
+        cairo_stroke(cr);
+        cairo_set_operator(cr, CAIRO_OPERATOR_CLEAR);
+        roundedRect(cr, cx - cw / 2 - lw * 0.6, cy - R - lw * 0.5,
+                    cw + lw * 1.2, ch + lw, 1.8);
+        cairo_fill(cr);
+        cairo_pop_group_to_source(cr);
+        cairo_paint(cr);
+        setColor(cr, color);
+        roundedRect(cr, cx - cw / 2, cy - R, cw, ch, 1.8);
         cairo_stroke(cr);
     } else {
         known = false;
@@ -848,13 +893,48 @@ void Keyboard::layoutBar() {
 
     // Idle: tools. Hiding keeps the corner Gboard and Windows give it.
     double left = Edge;
-    add(KeyKind::EmojiPage, "😊", left, tool);
-    left += tool;
-    add(KeyKind::KaomojiPage, "", left, tool);
     right -= tool;
     add(KeyKind::Hide, "", right, tool);
     right -= tool;
     add(KeyKind::More, "", right, tool);
+
+    if (terminal_ && !inPicker() && !menuOpen_) {
+        // 😊 and (・ω・) move into ⋯ so Esc sits flush with 'q' below.
+        static const std::vector<std::string> tkeys = {
+            "Esc", "Tab", "Ctrl", "Alt", "-", "/", "|", "←", "↓", "↑", "→"};
+        const double padR = 6;
+        const double avail = (right - padR) - left;
+        const double kw = avail / tkeys.size();
+        for (size_t i = 0; i < tkeys.size(); i++) {
+            add(KeyKind::TermKey, tkeys[i], left + i * kw, kw, int(i));
+        }
+        return;
+    }
+
+    add(KeyKind::EmojiPage, "😊", left, tool);
+    left += tool;
+    add(KeyKind::KaomojiPage, "", left, tool);
+    left += tool;
+    if (!inPicker() && !menuOpen_) {
+        add(KeyKind::Undo, "", left, tool);
+        left += tool;
+        add(KeyKind::Redo, "", left, tool);
+        left += tool;
+        add(KeyKind::Paste, "", left, tool);
+    }
+}
+
+void Keyboard::setTerminal(bool terminal) {
+    if (terminal == terminal_) {
+        return;
+    }
+    terminal_ = terminal;
+    layoutBar();
+}
+
+void Keyboard::openPickerPage(int page) {
+    openPicker(page);
+    layoutBar();
 }
 
 void Keyboard::setCandidates(Candidates candidates) {
@@ -1032,8 +1112,32 @@ bool Keyboard::adjacent(int a, int b) const {
 }
 
 bool Keyboard::repeats(int key) const {
+    return repeatSym(key) != 0;
+}
+
+uint32_t Keyboard::repeatSym(int key) const {
     const auto *k = find(key);
-    return k && k->kind == KeyKind::Backspace;
+    if (!k) {
+        return 0;
+    }
+    if (k->kind == KeyKind::Backspace) {
+        return Backspace;
+    }
+    if (k->kind == KeyKind::TermKey) {
+        if (k->label == "←") {
+            return Left;
+        }
+        if (k->label == "↑") {
+            return Up;
+        }
+        if (k->label == "→") {
+            return Right;
+        }
+        if (k->label == "↓") {
+            return Down;
+        }
+    }
+    return 0;
 }
 
 bool Keyboard::isSpace(int key) const {
@@ -1044,6 +1148,16 @@ bool Keyboard::isSpace(int key) const {
 bool Keyboard::isShift(int key) const {
     const auto *k = find(key);
     return k && k->kind == KeyKind::Shift;
+}
+
+bool Keyboard::isCtrl(int key) const {
+    const auto *k = find(key);
+    return k && k->kind == KeyKind::TermKey && k->label == "Ctrl";
+}
+
+bool Keyboard::isAlt(int key) const {
+    const auto *k = find(key);
+    return k && k->kind == KeyKind::TermKey && k->label == "Alt";
 }
 
 bool Keyboard::isChar(int key) const {
@@ -1267,6 +1381,35 @@ std::vector<uint32_t> Keyboard::dragSpace(double x) {
     return syms;
 }
 
+uint32_t Keyboard::takeModifiers() {
+    uint32_t mods = 0;
+    if (ctrl_ != Shift::Off || ctrlHeld_) {
+        mods |= ModCtrl;
+        if (ctrlHeld_) {
+            ctrlUsed_ = true;
+        } else if (ctrl_ == Shift::Once) {
+            ctrl_ = Shift::Off;
+        }
+    }
+    if (alt_ != Shift::Off || altHeld_) {
+        mods |= ModAlt;
+        if (altHeld_) {
+            altUsed_ = true;
+        } else if (alt_ == Shift::Once) {
+            alt_ = Shift::Off;
+        }
+    }
+    if (mods && (shift_ != Shift::Off || shiftHeld_)) {
+        mods |= ModShift;
+        if (shiftHeld_) {
+            shiftUsed_ = true;
+        } else if (shift_ == Shift::Once) {
+            shift_ = Shift::Off;
+        }
+    }
+    return mods;
+}
+
 Keyboard::Action Keyboard::release(int key) {
     const auto *k = find(key);
     Action a;
@@ -1302,6 +1445,12 @@ Keyboard::Action Keyboard::release(int key) {
             break;
         }
         auto s = k->label;
+        const uint32_t mods = takeModifiers();
+        if (mods) {
+            a.sym = static_cast<unsigned char>(s[0]);
+            a.mods = mods;
+            break;
+        }
         if (static_cast<unsigned char>(s[0]) >= 0x80) {
             // Not a key at all (注音's ，): straight in.
             a.text = s;
@@ -1322,17 +1471,77 @@ Keyboard::Action Keyboard::release(int key) {
     }
     case KeyKind::Space:
         // A drag moved the cursor instead.
-        a.sym = dragged ? 0 : ' ';
+        if (!dragged) {
+            a.sym = ' ';
+            a.mods = takeModifiers();
+        }
         break;
     case KeyKind::Enter:
         a.sym = Return;
+        a.mods = takeModifiers();
         break;
     case KeyKind::CursorRight:
         a.sym = 0xff53;
+        a.mods = takeModifiers();
         break;
     case KeyKind::Backspace:
         // Sent on press, and repeated while held.
         break;
+    case KeyKind::Undo:
+        a.sym = 'z';
+        a.mods = ModCtrl;
+        break;
+    case KeyKind::Redo:
+        a.sym = 'z';
+        a.mods = ModCtrl | ModShift;
+        break;
+    case KeyKind::Paste:
+        a.sym = 'v';
+        a.mods = ModCtrl;
+        break;
+    case KeyKind::TermKey: {
+        if (k->label == "Ctrl" || k->label == "Alt") {
+            const bool isC = k->label == "Ctrl";
+            Shift &mod = isC ? ctrl_ : alt_;
+            bool &held = isC ? ctrlHeld_ : altHeld_;
+            bool &used = isC ? ctrlUsed_ : altUsed_;
+            uint64_t &lastTap = isC ? lastCtrlTap_ : lastAltTap_;
+            const bool chord = used;
+            held = used = false;
+            if (chord) {
+                break;
+            }
+            auto now = nowMs();
+            if (mod == Shift::Once && now - lastTap < 350) {
+                mod = Shift::Locked;
+            } else {
+                mod = mod == Shift::Off ? Shift::Once : Shift::Off;
+            }
+            lastTap = now;
+            break;
+        }
+        if (repeatSym(key)) {
+            // Sent on press, and repeated while held.
+            break;
+        }
+        if (k->label == "Esc") {
+            a.sym = Escape;
+            a.mods = takeModifiers();
+        } else if (k->label == "Tab") {
+            a.sym = Tab;
+            a.mods = takeModifiers();
+        } else if (!k->label.empty()) {
+            const uint32_t mods = takeModifiers();
+            if (mods) {
+                a.sym = static_cast<unsigned char>(k->label[0]);
+                a.mods = mods;
+            } else {
+                // Plain '-', '/', '|' in terminal strip commit directly past rime.
+                a.text = k->label;
+            }
+        }
+        break;
+    }
     case KeyKind::Shift: {
         const bool chord = shiftUsed_;
         shiftHeld_ = shiftUsed_ = false;
@@ -1425,8 +1634,10 @@ void Keyboard::reset() {
     symbols_ = false;
     menuOpen_ = false;
     page_ = Page::Keys;
-    shift_ = Shift::Off;
+    shift_ = ctrl_ = alt_ = Shift::Off;
     shiftHeld_ = shiftUsed_ = false;
+    ctrlHeld_ = ctrlUsed_ = false;
+    altHeld_ = altUsed_ = false;
     held_.clear();
     popup_ = {};
     flick_ = {};
@@ -1508,6 +1719,15 @@ void Keyboard::paintBar(cairo_t *cr, const Theme &theme, PangoLayout *layout,
         case KeyKind::KaomojiPage:
             drawIcon(cr, "kaomoji", cx, cy, k.h * 0.26, theme.text);
             break;
+        case KeyKind::Undo:
+            drawIcon(cr, "undo", cx, cy, k.h * 0.26, theme.text);
+            break;
+        case KeyKind::Redo:
+            drawIcon(cr, "redo", cx, cy, k.h * 0.26, theme.text);
+            break;
+        case KeyKind::Paste:
+            drawIcon(cr, "paste", cx, cy, k.h * 0.26, theme.text);
+            break;
         case KeyKind::More:
             // Three dots.
             for (int d = -1; d <= 1; d++) {
@@ -1516,6 +1736,53 @@ void Keyboard::paintBar(cairo_t *cr, const Theme &theme, PangoLayout *layout,
                 cairo_fill(cr);
             }
             break;
+        case KeyKind::TermKey: {
+            const double gx = 3, gy = 6;
+            const bool isC = k.label == "Ctrl", isA = k.label == "Alt";
+            const Shift mod = isC ? ctrl_ : isA ? alt_ : Shift::Off;
+            const bool modHeld = (isC && ctrlHeld_) || (isA && altHeld_);
+            const bool lit =
+                isHeld(BarBase + i) || mod != Shift::Off || modHeld;
+            const bool locked = mod == Shift::Locked;
+            Color fill = theme.keyAlt;
+            if (lit) {
+                fill = mix(fill, theme.accent, locked ? 0.6 : 0.3);
+            }
+            roundedRect(cr, k.x + gx, k.y + gy, k.w - 2 * gx, k.h - 2 * gy, 5);
+            setColor(cr, fill);
+            if (lit) {
+                cairo_fill_preserve(cr);
+                setColor(cr, theme.accent);
+                cairo_set_line_width(cr, 1.5);
+                cairo_stroke(cr);
+            } else {
+                cairo_fill(cr);
+            }
+            if (k.label == "←" || k.label == "→" || k.label == "↑" ||
+                k.label == "↓") {
+                const double ar = k.h * 0.135;
+                if (k.label == "←" || k.label == "→") {
+                    const double dir = k.label == "←" ? -1 : 1;
+                    cairo_move_to(cr, cx - dir * ar * 1.15, cy);
+                    cairo_line_to(cr, cx + dir * ar * 1.15, cy);
+                    cairo_move_to(cr, cx + dir * ar * 0.2, cy - ar * 0.95);
+                    cairo_line_to(cr, cx + dir * ar * 1.15, cy);
+                    cairo_line_to(cr, cx + dir * ar * 0.2, cy + ar * 0.95);
+                } else {
+                    const double dir = k.label == "↑" ? -1 : 1;
+                    cairo_move_to(cr, cx, cy - dir * ar * 1.15);
+                    cairo_line_to(cr, cx, cy + dir * ar * 1.15);
+                    cairo_move_to(cr, cx - ar * 0.95, cy + dir * ar * 0.2);
+                    cairo_line_to(cr, cx, cy + dir * ar * 1.15);
+                    cairo_line_to(cr, cx + ar * 0.95, cy + dir * ar * 0.2);
+                }
+                strokeRound(cr, theme.text);
+            } else {
+                showText(k.label, barH_ * 0.31, k.x, k.y, k.w, k.h, theme.text,
+                         true);
+            }
+            break;
+        }
         default:
             break;
         }

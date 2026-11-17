@@ -10,15 +10,20 @@
 // A key on a physical keyboard switches back.
 
 #include <fcntl.h>
+#include <linux/uinput.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#include <cctype>
 #include <cmath>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <functional>
 #include <map>
 #include <memory>
+#include <set>
 #include <tuple>
 #include <vector>
 #include <cairo.h>
@@ -232,6 +237,127 @@ private:
     int unsaved_ = 0;
 };
 
+// Virtual keyboard device for modifier chords (Ctrl+C, Ctrl+Z, Alt+., etc.).
+// KWin drops modifiers on zwp_input_method_context_v1.keysym for text-input-v3
+// clients; opened at startup so libinput already sees the device on first tap.
+class Uinput {
+public:
+    Uinput() {
+        fd_ = open("/dev/uinput", O_WRONLY | O_NONBLOCK | O_CLOEXEC);
+        if (fd_ < 0) {
+            return;
+        }
+        ioctl(fd_, UI_SET_EVBIT, EV_KEY);
+        for (int k = KEY_ESC; k <= KEY_MICMUTE; k++) {
+            ioctl(fd_, UI_SET_KEYBIT, k);
+        }
+        uinput_setup usetup{};
+        usetup.id.bustype = BUS_VIRTUAL;
+        usetup.id.vendor = 0x1209;
+        usetup.id.product = 0x4854;
+        std::snprintf(usetup.name, UINPUT_MAX_NAME_SIZE, "hotaru-keys");
+        if (ioctl(fd_, UI_DEV_SETUP, &usetup) < 0 ||
+            ioctl(fd_, UI_DEV_CREATE) < 0) {
+            close(fd_);
+            fd_ = -1;
+        }
+    }
+
+    ~Uinput() {
+        if (fd_ >= 0) {
+            ioctl(fd_, UI_DEV_DESTROY);
+            close(fd_);
+        }
+    }
+
+    static uint16_t evdevOf(uint32_t sym, bool *needShift) {
+        if (needShift) {
+            *needShift = false;
+        }
+        if (sym >= 'A' && sym <= 'Z') {
+            if (needShift) {
+                *needShift = true;
+            }
+            sym = std::tolower(sym);
+        }
+        switch (sym) {
+        case 'a': return KEY_A; case 'b': return KEY_B; case 'c': return KEY_C;
+        case 'd': return KEY_D; case 'e': return KEY_E; case 'f': return KEY_F;
+        case 'g': return KEY_G; case 'h': return KEY_H; case 'i': return KEY_I;
+        case 'j': return KEY_J; case 'k': return KEY_K; case 'l': return KEY_L;
+        case 'm': return KEY_M; case 'n': return KEY_N; case 'o': return KEY_O;
+        case 'p': return KEY_P; case 'q': return KEY_Q; case 'r': return KEY_R;
+        case 's': return KEY_S; case 't': return KEY_T; case 'u': return KEY_U;
+        case 'v': return KEY_V; case 'w': return KEY_W; case 'x': return KEY_X;
+        case 'y': return KEY_Y; case 'z': return KEY_Z;
+        case '1': return KEY_1; case '2': return KEY_2; case '3': return KEY_3;
+        case '4': return KEY_4; case '5': return KEY_5; case '6': return KEY_6;
+        case '7': return KEY_7; case '8': return KEY_8; case '9': return KEY_9;
+        case '0': return KEY_0;
+        case '-': return KEY_MINUS; case '=': return KEY_EQUAL;
+        case '[': return KEY_LEFTBRACE; case ']': return KEY_RIGHTBRACE;
+        case '\\': return KEY_BACKSLASH; case ';': return KEY_SEMICOLON;
+        case '\'': return KEY_APOSTROPHE; case '`': return KEY_GRAVE;
+        case ',': return KEY_COMMA; case '.': return KEY_DOT;
+        case '/': return KEY_SLASH; case ' ': return KEY_SPACE;
+        case '|':
+            if (needShift) *needShift = true;
+            return KEY_BACKSLASH;
+        case '_':
+            if (needShift) *needShift = true;
+            return KEY_MINUS;
+        case 0xff08: return KEY_BACKSPACE;
+        case 0xff09: return KEY_TAB;
+        case 0xff0d: return KEY_ENTER;
+        case 0xff1b: return KEY_ESC;
+        case 0xff51: return KEY_LEFT;
+        case 0xff52: return KEY_UP;
+        case 0xff53: return KEY_RIGHT;
+        case 0xff54: return KEY_DOWN;
+        case 0xffff: return KEY_DELETE;
+        default: return 0;
+        }
+    }
+
+    bool send(uint32_t sym, uint32_t mods) {
+        if (fd_ < 0) {
+            return false;
+        }
+        bool symShift = false;
+        const uint16_t code = evdevOf(sym, &symShift);
+        if (!code) {
+            return false;
+        }
+        const bool sh = symShift || (mods & Keyboard::ModShift);
+        const bool ct = (mods & Keyboard::ModCtrl) != 0;
+        const bool al = (mods & Keyboard::ModAlt) != 0;
+        if (ct) emit(EV_KEY, KEY_LEFTCTRL, 1);
+        if (al) emit(EV_KEY, KEY_LEFTALT, 1);
+        if (sh) emit(EV_KEY, KEY_LEFTSHIFT, 1);
+        emit(EV_SYN, SYN_REPORT, 0);
+        emit(EV_KEY, code, 1);
+        emit(EV_SYN, SYN_REPORT, 0);
+        emit(EV_KEY, code, 0);
+        emit(EV_SYN, SYN_REPORT, 0);
+        if (sh) emit(EV_KEY, KEY_LEFTSHIFT, 0);
+        if (al) emit(EV_KEY, KEY_LEFTALT, 0);
+        if (ct) emit(EV_KEY, KEY_LEFTCTRL, 0);
+        emit(EV_SYN, SYN_REPORT, 0);
+        return true;
+    }
+
+private:
+    void emit(uint16_t type, uint16_t code, int32_t value) {
+        input_event ev{};
+        ev.type = type;
+        ev.code = code;
+        ev.value = value;
+        [[maybe_unused]] auto r = ::write(fd_, &ev, sizeof(ev));
+    }
+
+    int fd_ = -1;
+};
+
 // What the keyboard shows besides its keys, gathered from fcitx.
 struct State {
     Candidates candidates;
@@ -242,6 +368,7 @@ struct State {
     bool hints = false;
     bool zhuyin = false;
     bool kana = false;
+    bool terminal = false;
     std::vector<MenuEntry> menu;
 };
 
@@ -261,6 +388,7 @@ public:
     void userHide();
     void userShow();
     void setState(const State &state);
+    void openPickerPage(int page);
 
 private:
     void globalRemove(uint32_t name);
@@ -274,7 +402,7 @@ private:
     void move(int32_t id, double x, double y);
     void lift(int32_t id);
     void cancel();
-    void startRepeat(int32_t id);
+    void startRepeat(int32_t id, uint32_t sym);
     void startLongPress(int32_t id);
     void longPress(int32_t id);
     void perform(const Keyboard::Action &action);
@@ -371,6 +499,7 @@ public:
     // Called by a connection: a finger is on the keyboard.
     void touched();
     void type(uint32_t sym);
+    void chord(uint32_t sym, uint32_t mods);
     void selectCandidate(int index);
     // Put text in as is, past the input method: what's being spelled is
     // settled first, the way punctuation would.
@@ -396,8 +525,14 @@ private:
     rimeSchemas(fcitx::InputContext *ic);
 
     fcitx::Instance *instance_;
+    Uinput uinput_;
+    uint64_t uinputUntil_ = 0;
     State state_;
     bool hints_ = false;
+    int termOverride_ = -1; // -1: auto by focused program, 0: off, 1: on
+    std::string lastProgram_;
+    enum class ExtraItem { Hints, Terminal, Emoji, Kaomoji };
+    std::vector<ExtraItem> extraMenu_;
     // What each label in the language key's row switches to: an input
     // method, and for rime which schema. rime's schema names are kept from
     // the last time it was on, so they still show while on EN.
@@ -699,7 +834,13 @@ void Connection::setState(const State &state) {
     keyboard_.setZhuyin(state.zhuyin);
     keyboard_.setKana(state.kana && !state.pad);
     keyboard_.setHints(state.hints);
+    keyboard_.setTerminal(state.terminal && !state.pad);
     keyboard_.setMenu(state.menu);
+    draw();
+}
+
+void Connection::openPickerPage(int page) {
+    keyboard_.openPickerPage(page);
     draw();
 }
 
@@ -850,13 +991,21 @@ void Connection::press(int32_t id, double x, double y) {
     countPress(id, key, x, y);
     fingers_[id] = {key, x, x};
     keyboard_.hold(key);
-    if (keyboard_.repeats(key)) {
-        addon_->type(0xff08);
-        startRepeat(id);
+    if (const uint32_t sym = keyboard_.repeatSym(key)) {
+        if (const uint32_t mods = keyboard_.takeModifiers()) {
+            addon_->chord(sym, mods);
+        } else {
+            addon_->type(sym);
+            startRepeat(id, sym);
+        }
     } else if (keyboard_.isSpace(key)) {
         keyboard_.dragSpace(x);
     } else if (keyboard_.isShift(key)) {
         keyboard_.shiftDown();
+    } else if (keyboard_.isCtrl(key)) {
+        keyboard_.ctrlDown();
+    } else if (keyboard_.isAlt(key)) {
+        keyboard_.altDown();
     } else if (keyboard_.isFlick(key)) {
         keyboard_.flickStart(key, x, y);
     }
@@ -986,6 +1135,12 @@ void Connection::move(int32_t id, double x, double y) {
     if (keyboard_.isShift(finger.key)) {
         keyboard_.shiftLeave();
     }
+    if (keyboard_.isCtrl(finger.key)) {
+        keyboard_.ctrlLeave();
+    }
+    if (keyboard_.isAlt(finger.key)) {
+        keyboard_.altLeave();
+    }
     keyboard_.unhold(finger.key);
     finger.key = key;
     keyboard_.hold(key);
@@ -1065,7 +1220,11 @@ void Connection::perform(const Keyboard::Action &action) {
         addon_->type(static_cast<unsigned char>(c));
     }
     if (action.sym) {
-        addon_->type(action.sym);
+        if (action.mods) {
+            addon_->chord(action.sym, action.mods);
+        } else {
+            addon_->type(action.sym);
+        }
     }
     if (!action.text.empty()) {
         addon_->commitText(action.text);
@@ -1097,17 +1256,21 @@ void Connection::cancel() {
     keyboard_.closePopup();
     keyboard_.release(-1);
     keyboard_.shiftLeave();
+    keyboard_.ctrlLeave();
+    keyboard_.altLeave();
     draw();
 }
 
-void Connection::startRepeat(int32_t id) {
+void Connection::startRepeat(int32_t id, uint32_t sym) {
     auto &loop = addon_->instance()->eventLoop();
     repeatFinger_ = id;
     repeat_ = loop.addTimeEvent(
         CLOCK_MONOTONIC, fcitx::now(CLOCK_MONOTONIC) + 400000, 0,
-        [this](fcitx::EventSourceTime *source, uint64_t) {
-            countErase();
-            addon_->type(0xff08);
+        [this, sym](fcitx::EventSourceTime *source, uint64_t) {
+            if (sym == 0xff08) {
+                countErase();
+            }
+            addon_->type(sym);
             source->setNextInterval(60000);
             source->setOneShot();
             return true;
@@ -1213,7 +1376,8 @@ Addon::Addon(fcitx::Instance *instance) : instance_(instance) {
         fcitx::EventType::InputContextKeyEvent,
         fcitx::EventWatcherPhase::PreInputMethod, [this](fcitx::Event &event) {
             auto &keyEvent = static_cast<fcitx::KeyEvent &>(event);
-            if (keyEvent.origKey().states().test(fcitx::KeyState::Virtual)) {
+            if (keyEvent.origKey().states().test(fcitx::KeyState::Virtual) ||
+                fcitx::now(CLOCK_MONOTONIC) < uinputUntil_) {
                 return;
             }
             instance_->setInputMethodMode(
@@ -1386,7 +1550,31 @@ void Addon::refresh() {
                     caps.test(fcitx::CapabilityFlag::Number) ||
                     caps.test(fcitx::CapabilityFlag::Dialable);
 
+        static const std::set<std::string> termApps = {
+            "org.kde.konsole",
+            "konsole",
+            "org.kde.kwi",
+            "kwi",
+            "com.mitchellh.ghostty",
+            "ghostty",
+            "kitty",
+            "foot",
+            "footclient",
+            "Alacritty",
+            "org.wezfurlong.wezterm",
+            "xterm",
+        };
+        const auto &prog = ic->program();
+        if (!prog.empty() && prog != lastProgram_) {
+            lastProgram_ = prog;
+            termOverride_ = -1;
+        }
+        const bool autoTerm = caps.test(fcitx::CapabilityFlag::Terminal) ||
+                              termApps.count(prog) > 0;
+        state.terminal = termOverride_ >= 0 ? (termOverride_ != 0) : autoTerm;
+
         menuActions_ = menuActions(ic);
+        extraMenu_.clear();
         for (auto *action : menuActions_) {
             state.menu.push_back(
                 {action->shortText(ic),
@@ -1394,6 +1582,15 @@ void Addon::refresh() {
         }
         if (state.chinese && !state.zhuyin) {
             state.menu.push_back({"双拼提示", hints_});
+            extraMenu_.push_back(ExtraItem::Hints);
+        }
+        state.menu.push_back({"终端列", state.terminal});
+        extraMenu_.push_back(ExtraItem::Terminal);
+        if (state.terminal) {
+            state.menu.push_back({"表情", false});
+            extraMenu_.push_back(ExtraItem::Emoji);
+            state.menu.push_back({"颜文字", false});
+            extraMenu_.push_back(ExtraItem::Kaomoji);
         }
         // The hints are 小鶴雙拼's; other input methods have their own keys.
         state.hints = hints_ && rime && !state.zhuyin;
@@ -1561,6 +1758,36 @@ void Addon::toggleLanguage() {
     instance_->toggle();
 }
 
+void Addon::chord(uint32_t sym, uint32_t mods) {
+    auto *ic = instance_->lastFocusedInputContext();
+    if (!ic) {
+        return;
+    }
+    uinputUntil_ = fcitx::now(CLOCK_MONOTONIC) + 100000;
+    if (uinput_.send(sym, mods)) {
+        return;
+    }
+    // Fallback when /dev/uinput is unavailable (e.g. unconfigured host):
+    // works on D-Bus IM clients, or sends ASCII control bytes in terminals.
+    uinputUntil_ = 0;
+    if (state_.terminal && mods == Keyboard::ModCtrl && sym >= 'a' &&
+        sym <= 'z') {
+        ic->commitString(std::string(1, char(sym - 'a' + 1)));
+        return;
+    }
+    fcitx::KeyStates states;
+    if (mods & Keyboard::ModShift) {
+        states |= fcitx::KeyState::Shift;
+    }
+    if (mods & Keyboard::ModCtrl) {
+        states |= fcitx::KeyState::Ctrl;
+    }
+    if (mods & Keyboard::ModAlt) {
+        states |= fcitx::KeyState::Alt;
+    }
+    ic->forwardKey(fcitx::Key(static_cast<fcitx::KeySym>(sym), states));
+}
+
 void Addon::activateMenuItem(int index) {
     auto *ic = instance_->lastFocusedInputContext();
     if (!ic || index < 0) {
@@ -1568,10 +1795,31 @@ void Addon::activateMenuItem(int index) {
     }
     if (size_t(index) < menuActions_.size()) {
         menuActions_[index]->activate(ic);
-    } else {
-        hints_ = !hints_;
+        refresh();
+        return;
     }
-    refresh();
+    const size_t extraIdx = size_t(index) - menuActions_.size();
+    if (extraIdx >= extraMenu_.size()) {
+        return;
+    }
+    switch (extraMenu_[extraIdx]) {
+    case ExtraItem::Hints:
+        hints_ = !hints_;
+        refresh();
+        break;
+    case ExtraItem::Terminal:
+        termOverride_ = state_.terminal ? 0 : 1;
+        refresh();
+        break;
+    case ExtraItem::Emoji:
+    case ExtraItem::Kaomoji: {
+        const int page = extraMenu_[extraIdx] == ExtraItem::Emoji ? 1 : 2;
+        for (auto &[display, conn] : connections_) {
+            conn->openPickerPage(page);
+        }
+        break;
+    }
+    }
 }
 
 class Factory : public fcitx::AddonFactory {

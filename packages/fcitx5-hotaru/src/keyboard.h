@@ -27,6 +27,10 @@ enum class KeyKind {
     NextPage,
     EmojiPage,   // the strip's 😊: the emoji page in place of the keys
     KaomojiPage, // the strip's (・ω・)
+    Undo,        // the strip's ↶: Ctrl+Z
+    Redo,        // the strip's ↷: Ctrl+Shift+Z
+    Paste,       // the strip's 📋: Ctrl+V
+    TermKey,     // terminal strip: Esc, Tab, Ctrl, Alt, -, /, |, arrows
     Letters,     // back to the keys from a picker page
     Tab,         // a picker page's category
     Cell,        // something to put in, on a picker page
@@ -80,8 +84,11 @@ public:
     void hold(int key);
     void unhold(int key);
     bool repeats(int key) const;
+    uint32_t repeatSym(int key) const;
     bool isSpace(int key) const;
     bool isShift(int key) const;
+    bool isCtrl(int key) const;
+    bool isAlt(int key) const;
     // A plain key that types on release; a second finger landing types it
     // at once, so fast two-thumb typing doesn't wait for the first lift.
     bool isChar(int key) const;
@@ -90,6 +97,10 @@ public:
     void shiftDown() { shiftHeld_ = true, shiftUsed_ = false; }
     // The finger slid off shift without lifting.
     void shiftLeave() { shiftHeld_ = false; }
+    void ctrlDown() { ctrlHeld_ = true, ctrlUsed_ = false; }
+    void ctrlLeave() { ctrlHeld_ = false; }
+    void altDown() { altHeld_ = true, altUsed_ = false; }
+    void altLeave() { altHeld_ = false; }
 
     // What holding a key gives: a row above it. The one at anchor sits over
     // the key and is picked unless the finger moves; an anchor of -1 (Enter)
@@ -116,9 +127,14 @@ public:
     // The finger is sliding along space: arrow keys to move the cursor by.
     std::vector<uint32_t> dragSpace(double x);
 
+    static constexpr uint32_t ModShift = 1;
+    static constexpr uint32_t ModCtrl = 2;
+    static constexpr uint32_t ModAlt = 4;
+
     struct Action {
-        uint32_t sym = 0; // keysym to type, or 0
-        std::string text; // or text to put in as is
+        uint32_t sym = 0;  // keysym to type, or 0
+        uint32_t mods = 0; // ModShift | ModCtrl | ModAlt for chorded keys
+        std::string text;  // or text to put in as is
         // Typed key by key for mozc, after a backspace if eraseFirst: ゛ on
         // か takes the か back and spells が.
         std::string romaji;
@@ -156,6 +172,12 @@ public:
     void setMenu(std::vector<MenuEntry> menu);
     // Double pinyin: print each key's final in its corner.
     void setHints(bool hints) { hints_ = hints; }
+    // Terminal strip in the idle bar (Esc, Tab, Ctrl, Alt, -, /, |, arrows),
+    // with 😊 and (・ω・) moved into ⋯.
+    void setTerminal(bool terminal);
+    bool terminal() const { return terminal_; }
+    uint32_t takeModifiers();
+    void openPickerPage(int page);
     void setFont(std::string font);
     // Emoji and kaomoji lists: "tab\titem" lines in emoji.txt and
     // kaomoji.txt under dir. Read once, shared by every keyboard.
@@ -226,8 +248,13 @@ private:
     bool symbols_ = false;
     bool menuOpen_ = false;
     bool hints_ = false;
+    bool terminal_ = false;
     Shift shift_ = Shift::Off;
+    Shift ctrl_ = Shift::Off;
+    Shift alt_ = Shift::Off;
     bool shiftHeld_ = false, shiftUsed_ = false;
+    bool ctrlHeld_ = false, ctrlUsed_ = false;
+    bool altHeld_ = false, altUsed_ = false;
     std::vector<int> held_;
     bool isHeld(int key) const;
     struct Popup {
@@ -238,7 +265,7 @@ private:
     } popup_;
     void paintPopup(cairo_t *cr, const Theme &theme, PangoLayout *layout,
                     PangoFontDescription *font) const;
-    uint64_t lastShiftTap_ = 0;
+    uint64_t lastShiftTap_ = 0, lastCtrlTap_ = 0, lastAltTap_ = 0;
     bool dragging_ = false, dragMoved_ = false;
     double dragOrigin_ = 0;
     // The strip's view into the candidates: where it starts, where the next

@@ -10,6 +10,12 @@
   # alike.
   i18n.inputMethod.fcitx5.addons = [ pkgs.kyaru.fcitx5-hotaru ];
 
+  # Let the logged-in seat user open /dev/uinput for hotaru's Ctrl/Alt chords
+  # (KWin drops modifiers on zwp_input_method_context_v1.keysym for v3 clients).
+  services.udev.extraRules = ''
+    KERNEL=="uinput", SUBSYSTEM=="misc", TAG+="uaccess"
+  '';
+
   # The SDDM greeter runs its own KWin as the sddm user with no fcitx, so
   # before the first login there is nothing to type the password with.
   # Give that KWin the same fcitx as its input method.
