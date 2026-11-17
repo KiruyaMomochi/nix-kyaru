@@ -228,10 +228,6 @@ in
           useXkbConfig = mkDefault true;
           config = {
             hwaccel = mkDefault true;
-            # Bind only the boot_vga / SoC display GPU so multi-GPU hosts
-            # (e.g. ASPEED BMC + headless compute cards) render on BMC KVM
-            # without claiming compute GPUs.
-            gpus = mkDefault "primary";
             ime = mkDefault true;
             font-name = mkDefault "Maple Mono NF TC";
             palette = mkDefault "custom";

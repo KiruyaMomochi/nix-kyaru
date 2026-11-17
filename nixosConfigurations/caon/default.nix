@@ -31,6 +31,8 @@
 
   # Enable desktop, but do not start automatically
   services.xserver.autorun = false;
+  # Bind kmscon only to the ASPEED BMC (boot_vga=1), leaving compute GPUs untouched.
+  services.kmscon.config.gpus = "primary";
   # modules/services/misc/graphical-desktop.nix
   systemd.defaultUnit = lib.mkForce "multi-user.target";
 
