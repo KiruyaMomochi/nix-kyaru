@@ -226,6 +226,8 @@ in
           enable = true;
           package = mkDefault pkgs.kyaru.kmscon-rime;
           useXkbConfig = mkDefault true;
+          # Isolate LevelDB userdb locks per VT (e.g. tty3 vs tty4).
+          extraOptions = mkDefault "--ime-user-dir /var/lib/kmscon/rime-%I";
           config = {
             hwaccel = mkDefault true;
             ime = mkDefault true;
