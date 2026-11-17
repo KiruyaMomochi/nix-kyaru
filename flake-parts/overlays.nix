@@ -33,6 +33,17 @@ in
             ../packages/d2-ascii-cjk-scale.patch
           ];
         });
+        nushell = prev.nushell.overrideAttrs (old: {
+          # reedline's Up/Down navigation defaults to PrefixSearch; switch to
+          # SubstringSearch for fish-style mid-command history matching.
+          postPatch = (old.postPatch or "") + ''
+            reedline_dir=$(echo "$cargoDepsCopy"/*/reedline-*)
+            substituteInPlace "$reedline_dir/src/engine.rs" \
+              --replace-fail 'HistoryNavigationQuery::PrefixSearch(buffer)' \
+                             'HistoryNavigationQuery::SubstringSearch(buffer)'
+            sed -i 's/"files":{[^}]*}/"files":{}/' "$reedline_dir/.cargo-checksum.json"
+          '';
+        });
         # nixpkgs PR #562910 aligns dragonflydb's automake with RE-flex.
         # The former RE-flex 5.2.2 pin now requests the missing aclocal-1.16.
         # nu_plugin_polars ethnum 1.5.2 -> 1.5.3 lockfile bump used to live here
