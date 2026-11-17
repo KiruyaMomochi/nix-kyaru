@@ -31,7 +31,6 @@ in
       hunspell
       hunspellDicts.en-us-large
       qbittorrent # qbittorrent-enhanced
-      kyaru.kwi
     ]) ++ lib.optionals pkgs.stdenv.hostPlatform.isx86_64 [
       pkgs.onlyoffice-desktopeditors
     ] ++ (with pkgs.kdePackages; [
