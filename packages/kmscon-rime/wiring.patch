@@ -1,0 +1,375 @@
+diff --git a/meson.build b/meson.build
+index 272375a..2818831 100644
+--- a/meson.build
++++ b/meson.build
+@@ -99,6 +99,7 @@ fontconfig_deps = dependency(
+     required: get_option('font_freetype'),
+ )
+ dbus_deps = dependency('dbus-1', disabler: true, required: get_option('dbus'))
++rime_deps = dependency('rime', disabler: true, required: get_option('ime'))
+ xsltproc = find_program(
+     'xsltproc',
+     native: true,
+@@ -132,6 +133,7 @@ foreach name, reqs : {
+     'font_freetype': [freetype_deps, fontconfig_deps],
+     'font_pango': [pango_deps],
+     'dbus': [dbus_deps],
++    'ime': [rime_deps],
+ }
+     found = true
+     foreach req : reqs
+@@ -157,6 +159,7 @@ config.set_quoted('BUILD_CONFIG_DIR', prefix / sysconfdir)
+ 
+ # Default $TERM value
+ config.set_quoted('BUILD_DEFAULT_TERM', get_option('term'))
++config.set_quoted('BUILD_IME_SHARED_DIR', get_option('ime_shared_dir'))
+ 
+ # Make all files include "config.h" by default. This shouldn't cause any
+ # problems and we cannot forget to include it anymore.
+diff --git a/meson.options b/meson.options
+index 9e43cb6..a39b786 100644
+--- a/meson.options
++++ b/meson.options
+@@ -35,6 +35,12 @@ option('font_pango', type: 'feature', value: 'auto',
+ option('dbus', type: 'feature', value: 'auto',
+   description: 'dbus integration')
+ 
++# librime input method integration
++option('ime', type: 'feature', value: 'auto',
++  description: 'librime input method integration')
++option('ime_shared_dir', type: 'string', value: '/usr/share/rime-data',
++  description: 'default librime shared data directory')
++
+ # TERM default value
+ option('term', type: 'string', value: 'kmscon',
+   description: 'default $TERM value')
+diff --git a/src/config.c b/src/config.c
+index 4ec0441..32ff467 100644
+--- a/src/config.c
++++ b/src/config.c
+@@ -942,6 +942,8 @@ static struct conf_grab def_grab_rotate_cw =
+ 
+ static struct conf_grab def_grab_rotate_ccw = CONF_SINGLE_GRAB(SHL_LOGO_MASK, XKB_KEY_minus);
+ 
++static struct conf_grab def_grab_ime_toggle = CONF_SINGLE_GRAB(SHL_LOGO_MASK, XKB_KEY_space);
++
+ static palette_t def_palette = {
+ 	[TSM_COLOR_BLACK] = {0, 0, 0},		   /* black */
+ 	[TSM_COLOR_RED] = {205, 0, 0},		   /* red */
+@@ -1025,6 +1027,11 @@ int kmscon_conf_new(struct conf_ctx **out)
+ 		CONF_OPTION_BOOL(0, "natural-scrolling", &conf->natural_scrolling, false),
+ 		CONF_OPTION_BOOL(0, "soft-cursor", &conf->soft_cursor, false),
+ 		CONF_OPTION_UINT(0, "dpms-timeout", &conf->dpms_timeout, 600),
++		CONF_OPTION_BOOL(0, "ime", &conf->ime, false),
++		CONF_OPTION_STRING(0, "ime-shared-dir", &conf->ime_shared_dir,
++				   BUILD_IME_SHARED_DIR),
++		CONF_OPTION_STRING(0, "ime-user-dir", &conf->ime_user_dir,
++				   "/var/lib/kmscon/rime"),
+ 
+ 		/* Grabs / Keyboard-Shortcuts */
+ 		CONF_OPTION_GRAB(0, "grab-scroll-up", &conf->grab_scroll_up, &def_grab_scroll_up),
+@@ -1046,6 +1053,8 @@ int kmscon_conf_new(struct conf_ctx **out)
+ 		CONF_OPTION_GRAB(0, "grab-rotate-ccw", &conf->grab_rotate_ccw,
+ 				 &def_grab_rotate_ccw),
+ 		CONF_OPTION_GRAB(0, "grab-reboot", &conf->grab_reboot, NULL),
++		CONF_OPTION_GRAB(0, "grab-ime-toggle", &conf->grab_ime_toggle,
++				 &def_grab_ime_toggle),
+ 
+ 		/* Video Options */
+ 		CONF_OPTION_BOOL_FULL(0, "drm", aftercheck_drm, NULL, NULL, &conf->drm, true),
+diff --git a/src/config.h b/src/config.h
+index 137bb8d..88cdb40 100644
+--- a/src/config.h
++++ b/src/config.h
+@@ -149,6 +149,12 @@ struct kmscon_conf_t {
+ 	bool soft_cursor;
+ 	/* DPMS screen timeout in seconds (0 = disabled) */
+ 	unsigned int dpms_timeout;
++	/* Enable librime input method */
++	bool ime;
++	/* librime shared data directory */
++	char *ime_shared_dir;
++	/* librime user data directory */
++	char *ime_user_dir;
+ 
+ 	/* Grabs / Keyboard-Shortcuts */
+ 	/* scroll-up grab */
+@@ -177,6 +183,8 @@ struct kmscon_conf_t {
+ 	struct conf_grab *grab_rotate_ccw;
+ 	/* reboot system grab */
+ 	struct conf_grab *grab_reboot;
++	/* toggle input method grab */
++	struct conf_grab *grab_ime_toggle;
+ 
+ 	/* Video Options */
+ 	/* use DRM if available */
+diff --git a/src/meson.build b/src/meson.build
+index 76b51d5..b88aad3 100644
+--- a/src/meson.build
++++ b/src/meson.build
+@@ -66,6 +66,10 @@ kmscon_dep = [
+     font_deps,
+     misc_deps,
+ ]
++if enable_ime
++    kmscon_srcs += ['ime.c']
++    kmscon_dep += [rime_deps]
++endif
+ 
+ kmscon = executable(
+     'kmscon',
+diff --git a/src/misc/pty.c b/src/misc/pty.c
+index dafd8db..55a9d6f 100644
+--- a/src/misc/pty.c
++++ b/src/misc/pty.c
+@@ -618,6 +618,20 @@ int kmscon_pty_get_slave_name(struct kmscon_pty *pty, char *buf, size_t len)
+ 	return ptsname_r(pty->fd, buf, len);
+ }
+ 
++bool kmscon_pty_is_password_prompt(struct kmscon_pty *pty)
++{
++	struct termios tios;
++
++	if (!pty || !pty_is_open(pty))
++		return false;
++
++	if (tcgetattr(pty->fd, &tios) < 0)
++		return false;
++
++	/* Canonical mode with ECHO disabled indicates login/getpass/passwd. */
++	return (tios.c_lflag & ICANON) && !(tios.c_lflag & ECHO);
++}
++
+ void kmscon_pty_resize(struct kmscon_pty *pty, unsigned short width, unsigned short height)
+ {
+ 	int ret;
+diff --git a/src/misc/pty.h b/src/misc/pty.h
+index ce6dd99..1d667ce 100644
+--- a/src/misc/pty.h
++++ b/src/misc/pty.h
+@@ -69,5 +69,6 @@ void kmscon_pty_signal(struct kmscon_pty *pty, int signum);
+ void kmscon_pty_resize(struct kmscon_pty *pty, unsigned short width, unsigned short height);
+ 
+ int kmscon_pty_get_slave_name(struct kmscon_pty *pty, char *buf, size_t len);
++bool kmscon_pty_is_password_prompt(struct kmscon_pty *pty);
+ 
+ #endif /* KMSCON_PTY_H */
+diff --git a/src/render/text.c b/src/render/text.c
+index dd14122..4b59c4f 100644
+--- a/src/render/text.c
++++ b/src/render/text.c
+@@ -212,6 +212,7 @@ void kmscon_text_unref(struct kmscon_text *text)
+ 	if (text->ops->destroy)
+ 		text->ops->destroy(text);
+ 	shl_register_record_unref(text->record);
++	free(text->overlay_buf);
+ 	free(text);
+ }
+ 
+@@ -437,7 +438,8 @@ static bool is_vbar(enum tsm_screen_cursor_style style)
+  *
+  * Returns: 0 on success or negative error code if this glyph couldn't be drawn.
+  */
+-int kmscon_text_draw(struct kmscon_text *txt, struct tsm_screen *con, bool cursor_blink)
++int kmscon_text_draw(struct kmscon_text *txt, struct tsm_screen *con, bool cursor_blink,
++		     const struct kmscon_text_overlay *overlay)
+ {
+ 	const struct tsm_screen_cell *cells;
+ 	struct kmscon_cursor cursor = {0};
+@@ -469,6 +471,63 @@ int kmscon_text_draw(struct kmscon_text *txt, struct tsm_screen *con, bool curso
+ 		} else if (is_vbar(style))
+ 			cursor.cell.ch = FONT_VBAR;
+ 	}
++
++	if (overlay && overlay->cells && overlay->len > 0 && txt->cols > 0 && txt->rows > 0) {
++		size_t total = (size_t)txt->cols * txt->rows;
++
++		if (total > txt->overlay_cap) {
++			struct tsm_screen_cell *nbuf =
++				realloc(txt->overlay_buf, total * sizeof(*nbuf));
++			if (nbuf) {
++				txt->overlay_buf = nbuf;
++				txt->overlay_cap = total;
++			}
++		}
++
++		if (txt->overlay_buf && txt->overlay_cap >= total) {
++			unsigned int row, x0, w, i;
++			struct tsm_screen_cell *line;
++			const struct tsm_screen_cell *orig_line;
++
++			memcpy(txt->overlay_buf, cells, total * sizeof(*cells));
++
++			if (txt->rows == 1)
++				row = 0;
++			else if (cursor.y + 1 < txt->rows)
++				row = cursor.y + 1;
++			else
++				row = cursor.y - 1;
++
++			w = overlay->len < txt->cols ? overlay->len : txt->cols;
++			x0 = cursor.x < txt->cols ? cursor.x : 0;
++			if (x0 + w > txt->cols)
++				x0 = txt->cols - w;
++
++			line = &txt->overlay_buf[row * txt->cols];
++			orig_line = &cells[row * txt->cols];
++
++			if (x0 > 0 && orig_line[x0 - 1].ch != 0 &&
++			    orig_line[x0 - 1].ch != ' ' &&
++			    tsm_ucs4_get_width(orig_line[x0 - 1].ch) == 2) {
++				line[x0 - 1].ch = ' ';
++			}
++
++			for (i = 0; i < w; i++)
++				line[x0 + i] = overlay->cells[i];
++
++			if (w < overlay->len && w > 0 && overlay->cells[w].ch == 0)
++				line[x0 + w - 1].ch = ' ';
++
++			if (x0 + w < txt->cols && line[x0 + w].ch == 0)
++				line[x0 + w].ch = ' ';
++
++			if (row == cursor.y && cursor.x >= x0 && cursor.x < x0 + w)
++				cursor.visible = false;
++
++			return txt->ops->draw(txt, txt->overlay_buf, &cursor);
++		}
++	}
++
+ 	return txt->ops->draw(txt, cells, &cursor);
+ }
+ 
+diff --git a/src/render/text.h b/src/render/text.h
+index d19233e..a5e87f6 100644
+--- a/src/render/text.h
++++ b/src/render/text.h
+@@ -67,6 +67,14 @@ struct kmscon_text {
+ 	bool rendering;
+ 	enum Orientation orientation;
+ 	bool blinking;
++
++	struct tsm_screen_cell *overlay_buf;
++	size_t overlay_cap;
++};
++
++struct kmscon_text_overlay {
++	const struct tsm_screen_cell *cells;
++	unsigned int len;
+ };
+ 
+ struct kmscon_cursor {
+@@ -117,7 +125,8 @@ void kmscon_text_resize(struct kmscon_text *txt, unsigned int cols, unsigned int
+ int kmscon_text_rotate(struct kmscon_text *txt, enum Orientation orientation);
+ 
+ int kmscon_text_prepare(struct kmscon_text *txt, struct tsm_screen_attr *attr, bool blinking);
+-int kmscon_text_draw(struct kmscon_text *txt, struct tsm_screen *con, bool cursor_blink);
++int kmscon_text_draw(struct kmscon_text *txt, struct tsm_screen *con, bool cursor_blink,
++		     const struct kmscon_text_overlay *overlay);
+ int kmscon_text_draw_pointer(struct kmscon_text *txt, unsigned int x, unsigned int y);
+ int kmscon_text_render(struct kmscon_text *txt);
+ void kmscon_text_abort(struct kmscon_text *txt);
+diff --git a/src/terminal.c b/src/terminal.c
+index c1e7887..345630d 100644
+--- a/src/terminal.c
++++ b/src/terminal.c
+@@ -40,6 +40,7 @@
+ #include "conf.h"
+ #include "config.h"
+ #include "font/font.h"
++#include "ime.h"
+ #include "input/input.h"
+ #include "issue.h"
+ #include "pty.h"
+@@ -114,6 +115,7 @@ struct kmscon_terminal {
+ 	bool cursor_blinking;
+ 
+ 	struct kmscon_asciinema *asciinema;
++	struct kmscon_ime *ime;
+ };
+ 
+ #define BLINK_TIMER_NS (500 * 1000 * 1000) // Blinking interval 500ms
+@@ -314,6 +316,7 @@ static void disable_screen(struct screen *scr)
+ static void do_redraw_screen(struct screen *scr)
+ {
+ 	struct tsm_screen_attr attr;
++	struct kmscon_text_overlay overlay = {0};
+ 	int ret;
+ 
+ 	if (!scr->term->awake || !kmscon_session_get_foreground(scr->term->session))
+@@ -329,8 +332,11 @@ static void do_redraw_screen(struct screen *scr)
+ 	scr->pending = false;
+ 
+ 	tsm_vte_get_def_attr(scr->term->vte, &attr);
++	kmscon_ime_build_overlay(scr->term->ime,
++				 scr->txt->font ? scr->txt->font : scr->term->font,
++				 &attr, &overlay);
+ 	kmscon_text_prepare(scr->txt, &attr, scr->term->blinking);
+-	kmscon_text_draw(scr->txt, scr->term->console, scr->term->cursor_blinking);
++	kmscon_text_draw(scr->txt, scr->term->console, scr->term->cursor_blinking, &overlay);
+ 	draw_pointer(scr);
+ 	kmscon_text_render(scr->txt);
+ 
+@@ -1018,6 +1024,11 @@ static void input_event(struct input *input, struct input_key_event *ev, void *d
+ 		return;
+ 	}
+ 
++	if (kmscon_ime_handle_key(term->ime, ev, kmscon_pty_is_password_prompt(term->pty))) {
++		ev->handled = true;
++		return;
++	}
++
+ 	/* TODO: xkbcommon supports multiple keysyms, but it is currently
+ 	 * unclear how this feature will be used. There is no keymap, which
+ 	 * uses this, yet. */
+@@ -1376,6 +1387,7 @@ void terminal_destroy(struct kmscon_terminal *term)
+ 	rm_all_screens(term);
+ 	ev_eloop_rm_timer(term->blink_timer);
+ 	ev_eloop_rm_timer(term->blink_cursor);
++	kmscon_ime_free(term->ime);
+ 	kmscon_asciinema_free(term->asciinema);
+ 	input_unregister_pointer_cb(term->input, pointer_event, term);
+ 	input_unregister_key_cb(term->input, input_event, term);
+@@ -1404,6 +1416,7 @@ static void pty_exit(struct kmscon_pty *pty, bool restart, void *data)
+ {
+ 	struct kmscon_terminal *term = data;
+ 
++	kmscon_ime_reset(term->ime);
+ 	terminal_close(term);
+ 
+ 	if (restart) {
+@@ -1428,6 +1441,21 @@ static void write_event(struct tsm_vte *vte, const char *u8, size_t len, void *d
+ 	kmscon_pty_write(term->pty, u8, len);
+ }
+ 
++static void ime_commit_event(const char *u8, size_t len, void *data)
++{
++	struct kmscon_terminal *term = data;
++
++	kmscon_pty_write(term->pty, u8, len);
++	tsm_screen_sb_reset(term->console);
++}
++
++static void ime_redraw_event(void *data)
++{
++	struct kmscon_terminal *term = data;
++
++	redraw_all(term);
++}
++
+ struct kmscon_terminal *terminal_new(struct kmscon_session *session, unsigned int vtnr,
+ 				     struct conf_ctx *conf_ctx, struct ev_eloop *eloop,
+ 				     struct input *input, const char *seat_name)
+@@ -1525,6 +1553,12 @@ struct kmscon_terminal *terminal_new(struct kmscon_session *session, unsigned in
+ 		if (ret)
+ 			log_warn("cannot load asciicast %s: %d", term->conf->asciicast, ret);
+ 	}
++	if (term->conf->ime) {
++		ret = kmscon_ime_new(&term->ime, term->eloop, term->conf, ime_commit_event,
++				     ime_redraw_event, term);
++		if (ret)
++			log_warning("cannot initialize librime IME: %d", ret);
++	}
+ 
+ 	ev_eloop_ref(term->eloop);
+ 	input_ref(term->input);

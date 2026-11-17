@@ -64,6 +64,9 @@
   hardware.graphics.enable = true;
   hardware.bluetooth.enable = true;
 
+  # Default auto font size picks 40px on the 2880x1620 15.6" panel; 24px (~260x67) fits better.
+  services.kmscon.config.font-size = 24;
+
   users.users.kyaru.uid = 1000;
   users.users.kyaru.extraGroups = [
     "video"

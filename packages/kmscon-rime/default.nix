@@ -41,8 +41,13 @@ kmscon.overrideAttrs (old: {
   pname = "kmscon-rime";
 
   patches = (old.patches or [ ]) ++ [
-    ./ime-rime.patch
+    ./wiring.patch
   ];
+
+  postPatch = (old.postPatch or "") + ''
+    cp ${./ime.h} src/ime.h
+    cp ${./ime.c} src/ime.c
+  '';
 
   buildInputs = (old.buildInputs or [ ]) ++ [
     librime
