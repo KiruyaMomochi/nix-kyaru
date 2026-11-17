@@ -16,6 +16,7 @@ let
     patch = {
       schema_list = map (schema: { inherit schema; }) schemas;
       "menu/page_size" = pageSize;
+      "switcher/hotkeys" = [ "Control+grave" ];
       "ascii_composer/switch_key" = {
         Shift_L = "noop";
         Shift_R = "noop";

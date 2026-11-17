@@ -44,27 +44,19 @@ index 9e43cb6..a39b786 100644
  option('term', type: 'string', value: 'kmscon',
    description: 'default $TERM value')
 diff --git a/src/config.c b/src/config.c
-index 4ec0441..9305acc 100644
+index 4ec0441..32ff467 100644
 --- a/src/config.c
 +++ b/src/config.c
-@@ -942,6 +942,16 @@ static struct conf_grab def_grab_rotate_cw =
+@@ -942,6 +942,8 @@ static struct conf_grab def_grab_rotate_cw =
  
  static struct conf_grab def_grab_rotate_ccw = CONF_SINGLE_GRAB(SHL_LOGO_MASK, XKB_KEY_minus);
  
-+static struct conf_grab def_grab_ime_toggle = {
-+	.num = 2,
-+	.mods = (unsigned int[]){SHL_LOGO_MASK, SHL_CONTROL_MASK},
-+	.num_syms = (unsigned int[]){1, 1},
-+	.keysyms = (uint32_t *[]){(uint32_t[]){XKB_KEY_space}, (uint32_t[]){XKB_KEY_space}},
-+};
-+
-+static struct conf_grab def_grab_ime_schema =
-+	CONF_SINGLE_GRAB(SHL_LOGO_MASK | SHL_SHIFT_MASK, XKB_KEY_space);
++static struct conf_grab def_grab_ime_toggle = CONF_SINGLE_GRAB(SHL_LOGO_MASK, XKB_KEY_space);
 +
  static palette_t def_palette = {
  	[TSM_COLOR_BLACK] = {0, 0, 0},		   /* black */
  	[TSM_COLOR_RED] = {205, 0, 0},		   /* red */
-@@ -1025,6 +1035,11 @@ int kmscon_conf_new(struct conf_ctx **out)
+@@ -1025,6 +1027,11 @@ int kmscon_conf_new(struct conf_ctx **out)
  		CONF_OPTION_BOOL(0, "natural-scrolling", &conf->natural_scrolling, false),
  		CONF_OPTION_BOOL(0, "soft-cursor", &conf->soft_cursor, false),
  		CONF_OPTION_UINT(0, "dpms-timeout", &conf->dpms_timeout, 600),
@@ -76,19 +68,17 @@ index 4ec0441..9305acc 100644
  
  		/* Grabs / Keyboard-Shortcuts */
  		CONF_OPTION_GRAB(0, "grab-scroll-up", &conf->grab_scroll_up, &def_grab_scroll_up),
-@@ -1046,6 +1061,10 @@ int kmscon_conf_new(struct conf_ctx **out)
+@@ -1046,6 +1053,8 @@ int kmscon_conf_new(struct conf_ctx **out)
  		CONF_OPTION_GRAB(0, "grab-rotate-ccw", &conf->grab_rotate_ccw,
  				 &def_grab_rotate_ccw),
  		CONF_OPTION_GRAB(0, "grab-reboot", &conf->grab_reboot, NULL),
 +		CONF_OPTION_GRAB(0, "grab-ime-toggle", &conf->grab_ime_toggle,
 +				 &def_grab_ime_toggle),
-+		CONF_OPTION_GRAB(0, "grab-ime-schema", &conf->grab_ime_schema,
-+				 &def_grab_ime_schema),
  
  		/* Video Options */
  		CONF_OPTION_BOOL_FULL(0, "drm", aftercheck_drm, NULL, NULL, &conf->drm, true),
 diff --git a/src/config.h b/src/config.h
-index 137bb8d..bc96d84 100644
+index 137bb8d..88cdb40 100644
 --- a/src/config.h
 +++ b/src/config.h
 @@ -149,6 +149,12 @@ struct kmscon_conf_t {
@@ -104,23 +94,21 @@ index 137bb8d..bc96d84 100644
  
  	/* Grabs / Keyboard-Shortcuts */
  	/* scroll-up grab */
-@@ -177,6 +183,10 @@ struct kmscon_conf_t {
+@@ -177,6 +183,8 @@ struct kmscon_conf_t {
  	struct conf_grab *grab_rotate_ccw;
  	/* reboot system grab */
  	struct conf_grab *grab_reboot;
 +	/* toggle input method grab */
 +	struct conf_grab *grab_ime_toggle;
-+	/* cycle input method schema grab */
-+	struct conf_grab *grab_ime_schema;
  
  	/* Video Options */
  	/* use DRM if available */
 diff --git a/src/ime.c b/src/ime.c
 new file mode 100644
-index 0000000..9ff1417
+index 0000000..aaa4803
 --- /dev/null
 +++ b/src/ime.c
-@@ -0,0 +1,880 @@
+@@ -0,0 +1,998 @@
 +/*
 + * kmscon - librime Input Method Integration
 + *
@@ -148,7 +136,9 @@ index 0000000..9ff1417
 +
 +#define KMSCON_IME_MAX_CELLS 512
 +#define KMSCON_IME_MAX_CANDS 10
-+#define KMSCON_IME_TOAST_NS (850 * 1000 * 1000L)
++#define KMSCON_IME_MAX_SCHEMAS 8
++#define KMSCON_IME_MAX_SLOTS (KMSCON_IME_MAX_SCHEMAS + 1)
++#define KMSCON_IME_TOAST_NS (1100 * 1000 * 1000L)
 +#define KMSCON_IME_WIDTH_CACHE_SIZE 128
 +
 +enum {
@@ -163,6 +153,11 @@ index 0000000..9ff1417
 +	char label[16];
 +	char text[128];
 +	char comment[64];
++};
++
++struct ime_schema_slot {
++	char id[64];
++	char name[64];
 +};
 +
 +struct ime_width_entry {
@@ -198,8 +193,14 @@ index 0000000..9ff1417
 +	char schema_name[64];
 +	bool is_simplified;
 +
++	/* Slot 0 is English ("EN"); slots 1..slot_count-1 are Rime schemas. */
++	unsigned int slot_count;
++	struct ime_schema_slot slots[KMSCON_IME_MAX_SLOTS];
++	unsigned int mru[KMSCON_IME_MAX_SLOTS];
++	bool enum_active;
++	unsigned int enum_pos;
++
 +	bool toast_visible;
-+	char toast_text[64];
 +
 +	struct kmscon_font *cached_font;
 +	struct ime_width_entry width_cache[KMSCON_IME_WIDTH_CACHE_SIZE];
@@ -319,32 +320,111 @@ index 0000000..9ff1417
 +	dst[n] = '\0';
 +}
 +
-+static void format_status_badge(const struct kmscon_ime *ime, char *buf, size_t cap)
++static void format_slot_label(const struct kmscon_ime *ime, unsigned int slot,
++			      char *buf, size_t cap)
 +{
-+	if (!ime->enabled) {
++	const char *id, *name;
++	bool active_slot;
++	bool simp;
++
++	if (slot == 0 || slot >= ime->slot_count) {
 +		copy_str(buf, cap, "EN");
 +		return;
 +	}
 +
-+	if (strstr(ime->schema_id, "flypy") || strstr(ime->schema_id, "double_pinyin")) {
-+		copy_str(buf, cap, ime->is_simplified ? "拼 双拼" : "拼 雙拼");
-+	} else if (strstr(ime->schema_id, "bopomofo")) {
-+		copy_str(buf, cap, ime->is_simplified ? "注 注音·简" : "注 注音");
-+	} else if (ime->schema_name[0]) {
-+		copy_str(buf, cap, ime->schema_name);
++	id = ime->slots[slot].id;
++	name = ime->slots[slot].name;
++	active_slot = ime->enabled && strcmp(ime->schema_id, id) == 0;
++	simp = active_slot && ime->is_simplified;
++
++	if (strstr(id, "flypy") || strstr(id, "double_pinyin")) {
++		copy_str(buf, cap, simp ? "拼 双拼" : "拼 雙拼");
++	} else if (strstr(id, "bopomofo")) {
++		copy_str(buf, cap, simp ? "注 注音·简" : "注 注音");
++	} else if (name[0]) {
++		copy_str(buf, cap, name);
 +	} else {
 +		copy_str(buf, cap, "中文");
 +	}
++}
++
++static void load_schema_slots(struct kmscon_ime *ime)
++{
++	RimeSchemaList list = {0};
++	unsigned int i;
++
++	ime->slot_count = 1;
++	copy_str(ime->slots[0].id, sizeof(ime->slots[0].id), "ascii");
++	copy_str(ime->slots[0].name, sizeof(ime->slots[0].name), "EN");
++
++	if (ime->rime->get_schema_list(&list)) {
++		for (i = 0; i < list.size && ime->slot_count < KMSCON_IME_MAX_SLOTS; i++) {
++			unsigned int s = ime->slot_count++;
++			copy_str(ime->slots[s].id, sizeof(ime->slots[s].id),
++				 list.list[i].schema_id);
++			copy_str(ime->slots[s].name, sizeof(ime->slots[s].name),
++				 list.list[i].name);
++		}
++		ime->rime->free_schema_list(&list);
++	}
++
++	if (ime->slot_count == 1 && ime->schema_id[0]) {
++		ime->slot_count = 2;
++		copy_str(ime->slots[1].id, sizeof(ime->slots[1].id), ime->schema_id);
++		copy_str(ime->slots[1].name, sizeof(ime->slots[1].name), ime->schema_name);
++	}
++
++	for (i = 0; i < ime->slot_count; i++)
++		ime->mru[i] = i;
++}
++
++static unsigned int active_slot_index(const struct kmscon_ime *ime)
++{
++	unsigned int i;
++
++	if (!ime->enabled)
++		return 0;
++	for (i = 1; i < ime->slot_count; i++) {
++		if (strcmp(ime->slots[i].id, ime->schema_id) == 0)
++			return i;
++	}
++	return ime->slot_count > 1 ? 1 : 0;
++}
++
++static void promote_mru(struct kmscon_ime *ime, unsigned int slot)
++{
++	unsigned int pos, i;
++
++	if (slot >= ime->slot_count)
++		return;
++	for (pos = 0; pos < ime->slot_count; pos++) {
++		if (ime->mru[pos] == slot)
++			break;
++	}
++	if (pos == ime->slot_count)
++		return;
++	for (i = pos; i > 0; i--)
++		ime->mru[i] = ime->mru[i - 1];
++	ime->mru[0] = slot;
++}
++
++static void commit_mru(struct kmscon_ime *ime)
++{
++	promote_mru(ime, active_slot_index(ime));
++	ime->enum_active = false;
++	ime->enum_pos = 0;
 +}
 +
 +static void arm_toast(struct kmscon_ime *ime)
 +{
 +	struct itimerspec spec = {
 +		.it_interval = {0, 0},
-+		.it_value = {0, KMSCON_IME_TOAST_NS},
++		.it_value = {
++			.tv_sec = KMSCON_IME_TOAST_NS / 1000000000L,
++			.tv_nsec = KMSCON_IME_TOAST_NS % 1000000000L,
++		},
 +	};
 +
-+	format_status_badge(ime, ime->toast_text, sizeof(ime->toast_text));
 +	ime->toast_visible = true;
 +	if (ime->toast_timer)
 +		ev_timer_update(ime->toast_timer, &spec);
@@ -365,6 +445,7 @@ index 0000000..9ff1417
 +
 +	(void)timer;
 +	(void)num;
++	commit_mru(ime);
 +	if (!ime->toast_visible)
 +		return;
 +	ime->toast_visible = false;
@@ -387,6 +468,7 @@ index 0000000..9ff1417
 +		ime->is_simplified = st.is_simplified != False;
 +		if (ime->enabled && st.is_ascii_mode) {
 +			ime->enabled = false;
++			commit_mru(ime);
 +			if (allow_toast)
 +				arm_toast(ime);
 +		}
@@ -395,6 +477,7 @@ index 0000000..9ff1417
 +
 +	if (allow_toast && had_schema && ime->enabled &&
 +	    (strcmp(prev_schema, ime->schema_id) != 0 || prev_simp != ime->is_simplified)) {
++		commit_mru(ime);
 +		arm_toast(ime);
 +	}
 +}
@@ -467,6 +550,8 @@ index 0000000..9ff1417
 +	if (ime->sid) {
 +		ime->rime->set_option(ime->sid, "ascii_mode", False);
 +		sync_status(ime, false);
++		if (ime->slot_count == 0)
++			load_schema_slots(ime);
 +	}
 +}
 +
@@ -509,7 +594,13 @@ index 0000000..9ff1417
 +		log_warning("cannot create IME toast timer: %d", ret);
 +
 +	ensure_session(ime);
-+	log_info("initialized librime session (schema=%s)", ime->schema_id);
++	if (ime->slot_count == 0)
++		load_schema_slots(ime);
++	/* Start in English while keeping the user's primary Rime schema second in MRU. */
++	promote_mru(ime, active_slot_index(ime));
++	promote_mru(ime, 0);
++	log_info("initialized librime session (schema=%s, slots=%u)",
++		 ime->schema_id, ime->slot_count);
 +
 +	*out = ime;
 +	return 0;
@@ -536,36 +627,44 @@ index 0000000..9ff1417
 +		ime->rime->clear_composition(ime->sid);
 +	ime->enabled = false;
 +	ime->composing = false;
++	commit_mru(ime);
 +	cancel_toast(ime);
 +}
 +
-+static void cycle_schema(struct kmscon_ime *ime)
++static void switch_to_slot(struct kmscon_ime *ime, unsigned int slot)
 +{
-+	RimeSchemaList list = {0};
-+	size_t i, next = 0;
-+
 +	ensure_session(ime);
-+	if (!ime->sid)
-+		return;
++	if (ime->sid)
++		ime->rime->clear_composition(ime->sid);
 +
-+	ime->rime->clear_composition(ime->sid);
-+	if (ime->rime->get_schema_list(&list) && list.size > 0) {
-+		for (i = 0; i < list.size; i++) {
-+			if (list.list[i].schema_id &&
-+			    strcmp(list.list[i].schema_id, ime->schema_id) == 0) {
-+				next = (i + 1) % list.size;
-+				break;
-+			}
++	if (slot == 0 || slot >= ime->slot_count) {
++		ime->enabled = false;
++	} else {
++		ime->enabled = true;
++		if (ime->sid) {
++			if (strcmp(ime->schema_id, ime->slots[slot].id) != 0)
++				ime->rime->select_schema(ime->sid, ime->slots[slot].id);
++			ime->rime->set_option(ime->sid, "ascii_mode", False);
 +		}
-+		if (ime->enabled || list.size == 1)
-+			ime->rime->select_schema(ime->sid, list.list[next].schema_id);
-+		ime->rime->free_schema_list(&list);
 +	}
-+
-+	ime->enabled = true;
-+	ime->rime->set_option(ime->sid, "ascii_mode", False);
 +	sync_status(ime, false);
 +	sync_context(ime);
++}
++
++static void step_mru_toggle(struct kmscon_ime *ime)
++{
++	if (ime->slot_count <= 1)
++		return;
++
++	if (!ime->enum_active || !ime->toast_visible) {
++		promote_mru(ime, active_slot_index(ime));
++		ime->enum_active = true;
++		ime->enum_pos = 1;
++	} else {
++		ime->enum_pos = (ime->enum_pos + 1) % ime->slot_count;
++	}
++
++	switch_to_slot(ime, ime->mru[ime->enum_pos]);
 +	arm_toast(ime);
 +}
 +
@@ -582,41 +681,18 @@ index 0000000..9ff1417
 +		return false;
 +
 +	if (conf_grab_matches(ime->conf->grab_ime_toggle, ev->mods, ev->num_syms, ev->keysyms)) {
-+		ensure_session(ime);
-+		ime->enabled = !ime->enabled;
-+		if (ime->sid) {
-+			ime->rime->clear_composition(ime->sid);
-+			if (ime->enabled)
-+				ime->rime->set_option(ime->sid, "ascii_mode", False);
-+		}
-+		sync_status(ime, false);
-+		sync_context(ime);
-+		arm_toast(ime);
++		step_mru_toggle(ime);
 +		if (ime->redraw_cb)
 +			ime->redraw_cb(ime->cb_data);
 +		return true;
 +	}
 +
-+	if (conf_grab_matches(ime->conf->grab_ime_schema, ev->mods, ev->num_syms, ev->keysyms)) {
-+		cycle_schema(ime);
-+		if (ime->redraw_cb)
-+			ime->redraw_cb(ime->cb_data);
-+		return true;
-+	}
-+
-+	if (!ime->enabled || password_prompt || ev->num_syms != 1) {
-+		if (password_prompt && ime->composing && ime->sid) {
-+			ime->rime->clear_composition(ime->sid);
-+			sync_context(ime);
-+			if (ime->redraw_cb)
-+				ime->redraw_cb(ime->cb_data);
-+		}
++	if (ev->num_syms != 1)
 +		return false;
-+	}
 +
 +	sym = ev->keysyms[0];
 +
-+	/* Ignore standalone modifier presses. */
++	/* Ignore standalone modifier presses so holding Super doesn't end MRU cycling. */
 +	switch (sym) {
 +	case XKB_KEY_Shift_L:
 +	case XKB_KEY_Shift_R:
@@ -634,9 +710,28 @@ index 0000000..9ff1417
 +		break;
 +	}
 +
++	/* Any real key press settles the MRU selection and dismisses the switcher toast. */
++	if (ime->enum_active || ime->toast_visible) {
++		bool had_toast = ime->toast_visible;
++		commit_mru(ime);
++		cancel_toast(ime);
++		if (had_toast && ime->redraw_cb)
++			ime->redraw_cb(ime->cb_data);
++	}
++
++	if (!ime->enabled || password_prompt) {
++		if (password_prompt && ime->composing && ime->sid) {
++			ime->rime->clear_composition(ime->sid);
++			sync_context(ime);
++			if (ime->redraw_cb)
++				ime->redraw_cb(ime->cb_data);
++		}
++		return false;
++	}
++
 +	/*
-+	 * When idle (not composing), pass Ctrl/Alt/Super shortcuts directly to
-+	 * the terminal except Ctrl+` / F4 which open Rime's schema switcher.
++	 * When idle (not composing), pass function keys and Ctrl/Alt/Super
++	 * shortcuts directly to the terminal except Ctrl+` (Rime switcher).
 +	 */
 +	if (!ime->composing) {
 +		if (ev->mods & (INPUT_ALT_MASK | INPUT_LOGO_MASK))
@@ -644,8 +739,10 @@ index 0000000..9ff1417
 +		if ((ev->mods & INPUT_CONTROL_MASK) &&
 +		    sym != XKB_KEY_grave && sym != XKB_KEY_asciitilde)
 +			return false;
-+		if (sym != XKB_KEY_F4 && (sym < 0x20 || sym > 0x7e))
++		if (sym < 0x20 || sym > 0x7e)
 +			return false;
++	} else if (sym >= XKB_KEY_F1 && sym <= XKB_KEY_F12) {
++		return false;
 +	}
 +
 +	ensure_session(ime);
@@ -918,12 +1015,21 @@ index 0000000..9ff1417
 +	bold.bold = 1;
 +
 +	if (!ime->composing && ime->toast_visible) {
-+		struct tsm_screen_color bg = ime->enabled ? th.sel_bg : th.panel_bg;
-+		struct tsm_screen_color fg = ime->enabled ? th.sel_fg : th.muted_fg;
++		unsigned int cur = active_slot_index(ime);
++		unsigned int s;
 +
-+		push_cell_ch(ime, font, &len, ' ', fg, bg, plain);
-+		push_utf8(ime, font, &len, ime->toast_text, fg, bg, bold);
-+		push_cell_ch(ime, font, &len, ' ', fg, bg, plain);
++		for (s = 0; s < ime->slot_count; s++) {
++			char label[64];
++			bool sel = (s == cur);
++			struct tsm_screen_color bg = sel ? th.sel_bg : th.panel_bg;
++			struct tsm_screen_color fg = sel ? th.sel_fg : th.muted_fg;
++			tsm_screen_attr2_t a = sel ? bold : plain;
++
++			format_slot_label(ime, s, label, sizeof(label));
++			push_cell_ch(ime, font, &len, ' ', fg, bg, plain);
++			push_utf8(ime, font, &len, label, fg, bg, a);
++			push_cell_ch(ime, font, &len, ' ', fg, bg, plain);
++		}
 +
 +		out->cells = ime->bar;
 +		out->len = len;

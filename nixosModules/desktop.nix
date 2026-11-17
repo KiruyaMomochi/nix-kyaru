@@ -17,6 +17,11 @@ in
     };
     # Installed next to `environment`, picked at the SDDM session menu.
     hyprland.enable = mkEnableOption "Hyprland session (UWSM)";
+    kmscon.enable = mkOption {
+      type = types.bool;
+      default = true;
+      description = "Replace kernel VT with kmscon + native librime IME";
+    };
   };
 
   config =
@@ -215,6 +220,42 @@ in
         systemd.tmpfiles.rules = [
           "L+ /etc/opt/chrome/policies/managed/dms-theme.json - - - - ${config.users.users.kyaru.home}/.config/dms/chrome-policy.json"
         ];
+      })
+      (mkIf cfg.kmscon.enable {
+        services.kmscon = {
+          enable = true;
+          package = mkDefault pkgs.kyaru.kmscon-rime;
+          useXkbConfig = mkDefault true;
+          config = {
+            hwaccel = mkDefault true;
+            # Bind only the boot_vga / SoC display GPU so multi-GPU hosts
+            # (e.g. ASPEED BMC + headless compute cards) render on BMC KVM
+            # without claiming compute GPUs.
+            gpus = mkDefault "primary";
+            ime = mkDefault true;
+            font-name = mkDefault "Maple Mono NF TC";
+            palette = mkDefault "custom";
+            palette-background = mkDefault "22, 16, 20";
+            palette-foreground = mkDefault "226, 214, 220";
+            palette-black = mkDefault "34, 26, 31";
+            palette-red = mkDefault "196, 92, 110";
+            palette-green = mkDefault "138, 170, 140";
+            palette-yellow = mkDefault "214, 172, 128";
+            palette-blue = mkDefault "124, 136, 184";
+            palette-magenta = mkDefault "176, 110, 140";
+            palette-cyan = mkDefault "118, 166, 172";
+            palette-light-grey = mkDefault "200, 186, 194";
+            palette-dark-grey = mkDefault "92, 76, 86";
+            palette-light-red = mkDefault "232, 128, 146";
+            palette-light-green = mkDefault "170, 200, 168";
+            palette-light-yellow = mkDefault "236, 202, 160";
+            palette-light-blue = mkDefault "160, 172, 216";
+            palette-light-magenta = mkDefault "214, 150, 182";
+            palette-light-cyan = mkDefault "156, 200, 204";
+            palette-white = mkDefault "244, 236, 240";
+          };
+        };
+        systemd.services."kmsconvt@".serviceConfig.StateDirectory = "kmscon";
       })
     ]);
 }
