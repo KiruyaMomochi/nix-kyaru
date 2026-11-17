@@ -898,7 +898,7 @@ void Keyboard::layoutBar() {
     right -= tool;
     add(KeyKind::More, "", right, tool);
 
-    if (terminal_ && !inPicker() && !menuOpen_) {
+    if (terminal_ && !inPicker()) {
         // 😊 and (・ω・) move into ⋯ so Esc sits flush with 'q' below.
         static const std::vector<std::string> tkeys = {
             "Esc", "Tab", "Ctrl", "Alt", "-", "/", "|", "←", "↓", "↑", "→"};
@@ -915,7 +915,7 @@ void Keyboard::layoutBar() {
     left += tool;
     add(KeyKind::KaomojiPage, "", left, tool);
     left += tool;
-    if (!inPicker() && !menuOpen_) {
+    if (!inPicker()) {
         add(KeyKind::Undo, "", left, tool);
         left += tool;
         add(KeyKind::Redo, "", left, tool);
@@ -1569,6 +1569,7 @@ Keyboard::Action Keyboard::release(int key) {
     case KeyKind::More:
         menuOpen_ = !menuOpen_;
         a.menuOpened = menuOpen_;
+        layoutBar();
         break;
     case KeyKind::MenuItem:
         // Stays open, so the switch is seen to flip.
@@ -1666,11 +1667,13 @@ void Keyboard::paintBar(cairo_t *cr, const Theme &theme, PangoLayout *layout,
 
     for (size_t i = 0; i < bar_.size(); i++) {
         const auto &k = bar_[i];
-        // The open menu's button stays lit, like a held shift.
-        if (isHeld(BarBase + i) ||
-            (k.kind == KeyKind::More && menuOpen_) ||
-            (k.kind == KeyKind::EmojiPage && page_ == Page::Emoji) ||
-            (k.kind == KeyKind::KaomojiPage && page_ == Page::Kaomoji)) {
+        // The open menu's button stays lit, like a held shift. TermKey draws
+        // its own inset keycap outline below.
+        if (k.kind != KeyKind::TermKey &&
+            (isHeld(BarBase + i) ||
+             (k.kind == KeyKind::More && menuOpen_) ||
+             (k.kind == KeyKind::EmojiPage && page_ == Page::Emoji) ||
+             (k.kind == KeyKind::KaomojiPage && page_ == Page::Kaomoji))) {
             // The look of a selected candidate in fcitx's plasma theme.
             roundedRect(cr, k.x + 2, k.y + 2, k.w - 4, k.h - 4, 5);
             setColor(cr, mix(theme.background, theme.accent, 0.3));
