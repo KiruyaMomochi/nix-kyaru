@@ -1,0 +1,242 @@
+diff --git a/src/input/input.c b/src/input/input.c
+index 299410a..a45f282 100644
+--- a/src/input/input.c
++++ b/src/input/input.c
+@@ -68,7 +68,8 @@ static void notify_event(struct input_dev *dev, uint16_t type, uint16_t code, in
+ 		pointer_dev_abs(dev, code, value);
+ 		break;
+ 	case EV_SYN:
+-		pointer_dev_sync(dev);
++		if (code == SYN_REPORT)
++			pointer_dev_sync(dev);
+ 		break;
+ 	}
+ }
+@@ -125,6 +126,7 @@ static int input_init_abs(struct input_dev *dev)
+ 
+ 	dev->pointer.min_x = info.minimum;
+ 	dev->pointer.max_x = info.maximum;
++	dev->pointer.abs_x = info.value;
+ 
+ 	ret = ioctl(dev->rfd, EVIOCGABS(ABS_Y), &info);
+ 	if (ret < 0)
+@@ -132,6 +134,7 @@ static int input_init_abs(struct input_dev *dev)
+ 
+ 	dev->pointer.min_y = info.minimum;
+ 	dev->pointer.max_y = info.maximum;
++	dev->pointer.abs_y = info.value;
+ 
+ 	log_debug("ABSX min %d max %d ABSY min %d max %d\n", dev->pointer.min_x, dev->pointer.max_x,
+ 		  dev->pointer.min_y, dev->pointer.max_y);
+@@ -788,6 +791,15 @@ void input_set_pointer_max(struct input *input, unsigned int max_x, unsigned int
+ 	input->pointer_max_y = max_y;
+ }
+ 
++SHL_EXPORT
++void input_set_pointer_rotation(struct input *input, unsigned int orientation)
++{
++	if (!input)
++		return;
++
++	input->pointer_orientation = orientation;
++}
++
+ SHL_EXPORT
+ void input_set_leds(struct input *input, unsigned int scroll_lock, unsigned int num_lock,
+ 		    unsigned int caps_lock)
+diff --git a/src/input/input.h b/src/input/input.h
+index 8ec720c..cb8f6e3 100644
+--- a/src/input/input.h
++++ b/src/input/input.h
+@@ -118,6 +118,7 @@ void input_sleep(struct input *input);
+ void input_wake_up(struct input *input);
+ bool input_is_awake(struct input *input);
+ void input_set_pointer_max(struct input *input, unsigned int max_x, unsigned int max_y);
++void input_set_pointer_rotation(struct input *input, unsigned int orientation);
+ 
+ void input_set_leds(struct input *input, unsigned int scroll_lock, unsigned int num_lock,
+ 		    unsigned int caps_lock);
+diff --git a/src/input/input_internal.h b/src/input/input_internal.h
+index 383754e..cf542fe 100644
+--- a/src/input/input_internal.h
++++ b/src/input/input_internal.h
+@@ -78,6 +78,13 @@ struct input_pointer {
+ 	int32_t max_x;
+ 	int32_t min_y;
+ 	int32_t max_y;
++	int32_t abs_x;
++	int32_t abs_y;
++
++	bool touch_moved;
++	bool touch_btn_pending;
++	bool touch_btn_pressed;
++	bool touch_btn_dbl;
+ 
+ 	/* Track which button is currently pressed (BUTTON_NONE=none, 0=left, 1=right, 2=middle) */
+ 	uint8_t pressed_button;
+@@ -130,6 +137,7 @@ struct input {
+ 	struct shl_hook *pointer_hook;
+ 	int32_t pointer_max_x;
+ 	int32_t pointer_max_y;
++	unsigned int pointer_orientation;
+ 	struct ev_timer *hide_pointer;
+ 
+ 	struct dlist devices;
+diff --git a/src/input/input_pointer.c b/src/input/input_pointer.c
+index ec55494..6440874 100644
+--- a/src/input/input_pointer.c
++++ b/src/input/input_pointer.c
+@@ -60,10 +60,68 @@ static void pointer_dev_send_button(struct input_dev *dev, uint8_t button, bool
+ 	shl_hook_call(dev->input->pointer_hook, dev->input, &pev);
+ }
+ 
++static void touchscreen_update_coords(struct input_dev *dev)
++{
++	int64_t span_x = (int64_t)dev->pointer.max_x - dev->pointer.min_x;
++	int64_t span_y = (int64_t)dev->pointer.max_y - dev->pointer.min_y;
++	int64_t rx = (int64_t)dev->pointer.abs_x - dev->pointer.min_x;
++	int64_t ry = (int64_t)dev->pointer.abs_y - dev->pointer.min_y;
++	int64_t max_x = dev->input->pointer_max_x;
++	int64_t max_y = dev->input->pointer_max_y;
++
++	if (span_x <= 0 || span_y <= 0)
++		return;
++	if (rx < 0)
++		rx = 0;
++	else if (rx > span_x)
++		rx = span_x;
++	if (ry < 0)
++		ry = 0;
++	else if (ry > span_y)
++		ry = span_y;
++
++	switch (dev->input->pointer_orientation) {
++	default:
++	case 0: /* OR_NORMAL */
++		dev->pointer.x = (rx * max_x) / span_x;
++		dev->pointer.y = (ry * max_y) / span_y;
++		break;
++	case 1: /* OR_RIGHT */
++		dev->pointer.x = (ry * max_x) / span_y;
++		dev->pointer.y = ((span_x - rx) * max_y) / span_x;
++		break;
++	case 2: /* OR_UPSIDE_DOWN */
++		dev->pointer.x = ((span_x - rx) * max_x) / span_x;
++		dev->pointer.y = ((span_y - ry) * max_y) / span_y;
++		break;
++	case 3: /* OR_LEFT */
++		dev->pointer.x = ((span_y - ry) * max_x) / span_y;
++		dev->pointer.y = (rx * max_y) / span_x;
++		break;
++	}
++}
++
+ void pointer_dev_sync(struct input_dev *dev)
+ {
+ 	struct input_pointer_event pev = {0};
+ 
++	if (dev->pointer.kind == POINTER_TOUCHSCREEN) {
++		if (dev->pointer.touch_moved ||
++		    (dev->pointer.touch_btn_pending && dev->pointer.touch_btn_pressed)) {
++			dev->pointer.touch_moved = false;
++			touchscreen_update_coords(dev);
++			pointer_dev_send_move(dev);
++		}
++		if (dev->pointer.touch_btn_pending) {
++			bool pressed = dev->pointer.touch_btn_pressed;
++			bool dbl = dev->pointer.touch_btn_dbl;
++
++			dev->pointer.touch_btn_pending = false;
++			dev->pointer.pressed_button = pressed ? 0 : BUTTON_NONE;
++			pointer_dev_send_button(dev, 0, pressed, dbl);
++		}
++	}
++
+ 	pev.event = POINTER_SYNC;
+ 
+ 	shl_hook_call(dev->input->pointer_hook, dev->input, &pev);
+@@ -119,6 +177,9 @@ static void pointer_dev_abs_x(struct input_dev *dev, int32_t value)
+ 		}
+ 		break;
+ 	case POINTER_TOUCHSCREEN:
++		dev->pointer.abs_x = value;
++		dev->pointer.touch_moved = true;
++		return;
+ 	case POINTER_VMOUSE:
+ 		dev->pointer.x = ((value - dev->pointer.min_x) * dev->input->pointer_max_x) /
+ 				 (dev->pointer.max_x - dev->pointer.min_x);
+@@ -151,6 +212,9 @@ static void pointer_dev_abs_y(struct input_dev *dev, int32_t value)
+ 		}
+ 		break;
+ 	case POINTER_TOUCHSCREEN:
++		dev->pointer.abs_y = value;
++		dev->pointer.touch_moved = true;
++		return;
+ 	case POINTER_VMOUSE:
+ 		dev->pointer.y = ((value - dev->pointer.min_y) * dev->input->pointer_max_y) /
+ 				 (dev->pointer.max_y - dev->pointer.min_y);
+@@ -214,6 +278,19 @@ void pointer_dev_button(struct input_dev *dev, uint16_t code, int32_t value)
+ 			dev->pointer.touchpad_needs_sync_off_x = true;
+ 			dev->pointer.touchpad_needs_sync_off_y = true;
+ 		}
++		if (dev->pointer.kind == POINTER_TOUCHSCREEN &&
++		    !(dev->capabilities & DEVICE_HAS_MOUSE_BTN)) {
++			if (pressed) {
++				clock_gettime(CLOCK_MONOTONIC, &tp);
++				elapsed = (tp.tv_sec - dev->pointer.last_click.tv_sec) * 1000 +
++					  (tp.tv_nsec - dev->pointer.last_click.tv_nsec) / 1000000;
++				dbl_click = (elapsed < 500);
++				dev->pointer.last_click = tp;
++			}
++			dev->pointer.touch_btn_pending = true;
++			dev->pointer.touch_btn_pressed = pressed;
++			dev->pointer.touch_btn_dbl = dbl_click;
++		}
+ 		break;
+ 	default:
+ 		break;
+diff --git a/src/terminal.c b/src/terminal.c
+index 345630d..7ec2229 100644
+--- a/src/terminal.c
++++ b/src/terminal.c
+@@ -437,12 +437,24 @@ static void update_pointer_max_all(struct kmscon_terminal *term)
+ {
+ 	unsigned int width = term_min_width(term);
+ 	unsigned int height = term_min_height(term);
++	enum Orientation orientation = OR_NORMAL;
++	struct screen *scr;
+ 
+ 	if (!term->awake)
+ 		return;
+ 
+-	if (width < INT_MAX && height < INT_MAX)
++	dlist_for_each_entry(scr, &term->screens, list)
++	{
++		if (!scr->enabled)
++			continue;
++		orientation = kmscon_text_get_orientation(scr->txt);
++		break;
++	}
++
++	if (width < INT_MAX && height < INT_MAX) {
+ 		input_set_pointer_max(term->input, width, height);
++		input_set_pointer_rotation(term->input, orientation);
++	}
+ }
+ 
+ static void display_pageflip(void *unused, void *unused2, void *data)
+@@ -1360,10 +1372,12 @@ void terminal_activate(struct kmscon_terminal *term)
+ 		ev_timer_enable(term->blink_timer);
+ 		ev_timer_enable(term->blink_cursor);
+ 	}
+-	if (!term->opened)
++	if (!term->opened) {
+ 		terminal_open(term);
+-	else
++	} else {
+ 		kmscon_asciinema_resume(term->asciinema);
++		update_pointer_max_all(term);
++	}
+ 
+ 	terminal_refresh_displays(term);
+ }

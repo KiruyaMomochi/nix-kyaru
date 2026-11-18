@@ -42,6 +42,7 @@ kmscon.overrideAttrs (old: {
 
   patches = (old.patches or [ ]) ++ [
     ./wiring.patch
+    ./touchscreen-orientation.patch
   ];
 
   postPatch = (old.postPatch or "") + ''
