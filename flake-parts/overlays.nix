@@ -64,6 +64,10 @@ in
             });
           }
         );
+        # cockroachdb/swiss in otelcol-contrib 0.155.0 uses runtime linknames removed in Go 1.27.
+        opentelemetry-collector-releases = prev.opentelemetry-collector-releases.override {
+          buildGoModule = final.buildGo126Module;
+        };
       }
     );
   };
