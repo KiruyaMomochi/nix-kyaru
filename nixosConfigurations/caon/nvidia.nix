@@ -60,4 +60,11 @@
     item = "memlock";
     value = "infinity";
   }];
+
+  # Exclude compute-only NVIDIA DRM master nodes from seat0 so kmscon and
+  # Wayland/libseat compositors only bind the ASPEED BMC card0, while
+  # /dev/nvidia* and /dev/dri/renderD* remain available for CUDA and CDI.
+  services.udev.extraRules = ''
+    SUBSYSTEM=="drm", KERNEL=="card[0-9]*", SUBSYSTEMS=="pci", DRIVERS=="nvidia", TAG-="seat", TAG-="master-of-seat"
+  '';
 }
