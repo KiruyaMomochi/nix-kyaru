@@ -44,14 +44,11 @@ in
             sed -i 's/"files":{[^}]*}/"files":{}/' "$reedline_dir/.cargo-checksum.json"
           '';
         });
-        # nixpkgs PR #562910 aligns dragonflydb's automake with RE-flex.
-        # The former RE-flex 5.2.2 pin now requests the missing aclocal-1.16.
-        # nu_plugin_polars ethnum 1.5.2 -> 1.5.3 lockfile bump used to live here
-        # (nixpkgs PR #546343, for the rustc 1.97 E0512 on mem::transmute(())).
-        # That patch is now in nixpkgs itself as update-ethnum.patch, byte-for-byte
-        # identical to the copy we carried, so keeping ours made patchPhase apply
-        # the same hunk twice and fail with "Reversed (or previously applied)".
-        # Removed 2026-08-11 along with packages/nushell-plugin-polars-ethnum-1.5.3.patch.
+        # external-libs.patch drops upstream's `autoreconf -fi` on bundled RE-flex,
+        # whose shipped aclocal.m4 targets automake 1.18 while nixpkgs ships 1.19.
+        dragonflydb = prev.dragonflydb.overrideAttrs (old: {
+          preConfigure = old.preConfigure + "\n(cd build/deps-nixpkgs/reflex && autoreconf -fi)\n";
+        });
         # krdp: nixpkgs missing plasma-wayland-protocols → WITH_PLASMA_SESSION not built
         # --plasma flag is a no-op without this, falls back to broken PortalSession
         # upstream CMakeLists: find_package(PlasmaWaylandProtocols REQUIRED) when BUILD_PLASMA_SESSION=ON
