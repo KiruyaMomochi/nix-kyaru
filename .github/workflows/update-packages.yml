@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       package:
-        description: "Specific package to update (leave empty for all)"
+        description: "Specific package to update (caddy-naive, shadowquic, lmod, greptimedb-bin, greptimedb-grafana-datasource; leave empty for routine set)"
         required: false
         type: string
 
@@ -39,16 +39,11 @@ jobs:
 
           run_update() {
             local pkg="$1"
-            local script="packages/$pkg/update.sh"
-            if [ ! -f "$script" ]; then
-              echo "::warning::No update.sh found for $pkg"
-              return
-            fi
             echo "::group::Updating $pkg"
-            if bash "$script"; then
+            if ./scripts/bump.py update "$pkg"; then
               echo "::endgroup::"
-              if ! git diff --quiet; then
-                git add -A
+              if ! git diff --quiet -- "packages/$pkg"; then
+                git add "packages/$pkg"
                 git commit -m "chore($pkg): auto-update to latest"
                 updated="$updated $pkg"
               fi
@@ -56,14 +51,16 @@ jobs:
               echo "::endgroup::"
               echo "::warning::Failed to update $pkg"
               failed="$failed $pkg"
-              git checkout -- .
+              git checkout -- "packages/$pkg"
             fi
           }
 
           if [ -n "${{ inputs.package }}" ]; then
             run_update "${{ inputs.package }}"
           else
-            run_update "caddy-naive"
+            for pkg in caddy-naive shadowquic lmod greptimedb-bin; do
+              run_update "$pkg"
+            done
           fi
 
           echo "## Update Summary" >> "$GITHUB_STEP_SUMMARY"
