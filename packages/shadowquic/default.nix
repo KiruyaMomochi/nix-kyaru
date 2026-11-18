@@ -1,20 +1,23 @@
 { lib
 , rustPlatform
 , fetchFromGitHub
+, rust-jemalloc-sys
 }:
 
 rustPlatform.buildRustPackage (finalAttrs: {
   pname = "shadowquic";
-  version = "0.4.2";
+  version = "0.4.12";
 
   src = fetchFromGitHub {
     owner = "spongebob888";
     repo = "shadowquic";
     tag = "v${finalAttrs.version}";
-    hash = "sha256-bS0KGYQMH8TGeEnxob9N7nKlvXwNfXL5YZxqiDeDITg=";
+    hash = "sha256-0JXO/kFAQyCwHrYYEck4XVv/n7QrGHWOTJvYfJtFO9Q=";
   };
 
-  cargoHash = "sha256-wDRMAk96BWwsxiQDqxpQJxa58ijykCbOIenrt6rq0Ek=";
+  cargoHash = "sha256-NBUnLWuuRfNZsiEa/t3uO7huZoUZ4ylv2LL3keaM3+U=";
+
+  buildInputs = [ rust-jemalloc-sys ];
 
   # workspace default-members = [ "shadowquic" ]
   cargoBuildFlags = [ "-p" "shadowquic" ];

@@ -5,11 +5,11 @@
 }:
 stdenv.mkDerivation rec {
   pname = "greptimedb";
-  version = "1.2.1";
+  version = "1.3.1";
 
   src = fetchurl {
     url = "https://github.com/GreptimeTeam/greptimedb/releases/download/v${version}/greptime-linux-amd64-v${version}.tar.gz";
-    hash = "sha256-Bi1b6xPeSZHE/sIBsuUHFRi/TKjw1SlH66dXp0wqVCA=";
+    hash = "sha256-EbEoG4C5gtQKBtH7DJVTfByq1zCTmoSPh/bbZjjYWo8=";
   };
 
   nativeBuildInputs = [ autoPatchelfHook ];
