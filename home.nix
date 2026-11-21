@@ -215,6 +215,11 @@
   programs.direnv = {
     enable = true;
     enableBashIntegration = true; # see note on other shells below
+    # Upstream hook (home-manager#10162) runs `direnv export json e> /dev/stderr | complete`,
+    # which re-opens /dev/stderr -> /proc/self/fd/2 -> /dev/pts/N and fails with EACCES
+    # when the PTY is owned by another UID (e.g. `machinectl shell`, `su`, `sudo -iu`).
+    # Configured manually in programs.nushell.extraConfig below using `complete` + `print -e -n`.
+    enableNushellIntegration = false;
     nix-direnv.enable = true;
   };
 
@@ -290,6 +295,56 @@
         }
 
         $env.config.buffer_editor = "${config.programs.helix.package}/bin/hx"
+      ''
+      # Manual direnv hook replacing home-manager's enableNushellIntegration (see programs.direnv above).
+      # Uses `complete` to preserve stdout on non-zero exit (pipefail in nushell >= 0.111) and
+      # `print -e -n` to write to the inherited fd 2 without re-opening /dev/stderr.
+      ''
+        $env.config = ($env.config? | default {})
+        $env.config.hooks = ($env.config.hooks? | default {})
+        $env.config.hooks.pre_prompt = (
+            $env.config.hooks.pre_prompt?
+            | default []
+            | append {||
+                let direnv_result = (
+                    ${lib.getExe config.programs.direnv.package} export json
+                    | complete
+                )
+                if not ($direnv_result.stderr | is-empty) {
+                    print -e -n $direnv_result.stderr
+                }
+                let direnv = (
+                    $direnv_result.stdout
+                    | from json --strict
+                    | default {}
+                )
+
+                for key in ($direnv | columns) {
+                    if ($direnv | get $key) == null {
+                        hide-env --ignore-errors $key
+                    }
+                }
+
+                $direnv
+                | items {|key, value|
+                    let value = do (
+                        {
+                          "PATH": {
+                            from_string: {|s| $s | split row (char esep) | path expand --no-symlink }
+                            to_string: {|v| $v | path expand --no-symlink | str join (char esep) }
+                          }
+                        }
+                        | merge ($env.ENV_CONVERSIONS? | default {})
+                        | get ([[value, optional, insensitive]; [$key, true, true] [from_string, true, false]] | into cell-path)
+                        | if ($in | is-empty) { {|x| $x} } else { $in }
+                    ) $value
+                    return [ $key $value ]
+                }
+                | where {|pair| $pair.1 != null }
+                | into record
+                | load-env
+            }
+        )
       ''
     ];
   };
