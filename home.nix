@@ -47,7 +47,6 @@
       lurk # strace
       aria2
       lnav
-      pciutils # lspci
 
       # common commands
       file
@@ -84,12 +83,9 @@
       # others
       android-tools # adb for phone CDP/automation
       dconf # fix dconf error
-      typst
       # typst-lsp # not working
       rclone
       vscode-json-languageserver
-
-      awscli2
 
       # ai
       mods
@@ -97,11 +93,16 @@
       (writeShellScriptBin "claude" (builtins.readFile ./scripts/claude-wrapper.sh))
       (writeShellScriptBin "pi" (builtins.readFile ./scripts/pi-wrapper.sh))
       (writeShellScriptBin "agy" (builtins.readFile ./scripts/agy-wrapper.sh))
+    ])
+    ++ lib.optionals (!config.programs.kyaru.mobile.enable) (with pkgs; [
+      pciutils
+      typst
+      awscli2
       agent-browser
       d2
+      nushellPlugins.polars
     ])
     ++ (with pkgs.nushellPlugins; [
-      polars
       formats
       gstat
       query
@@ -394,7 +395,7 @@
     enableFishIntegration = false;
     enableZshIntegration = false;
     settings = {
-      default_shell = "${pkgs.nushell}/bin/nu";
+      default_shell = "${config.programs.nushell.package}/bin/nu";
       pane_frames = false;
       keybinds = {
         normal = {

@@ -24,6 +24,11 @@ let
         };
       }];
     });
+    "kyaru@hitohira" = (mkHome { pkgs = pkgsOf "aarch64-linux"; }).override (oldConfig: {
+      modules = oldConfig.modules ++ [{
+        programs.kyaru.mobile.enable = true;
+      }];
+    });
   };
 
   # Per-machine overrides from homeConfigurations/ directory

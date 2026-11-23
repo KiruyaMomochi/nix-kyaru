@@ -80,7 +80,7 @@ pkgs.runCommand "hitohira-0.1.0" {
   UsePAM no
   PrintMotd no
   Subsystem sftp internal-sftp
-  SetEnv PATH=/nix/var/nix/profiles/hitohira/bin:/nix/var/nix/profiles/hitohira/sbin:/home/kyaru/.local/bin:/system/bin:/data/adb/ksu/bin SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt TZ=Asia/Shanghai LANG=C.UTF-8
+  SetEnv PATH=/home/kyaru/.nix-profile/bin:/nix/var/nix/profiles/per-user/kyaru/profile/bin:/nix/var/nix/profiles/hitohira/bin:/nix/var/nix/profiles/hitohira/sbin:/home/kyaru/.local/bin:/system/bin:/data/adb/ksu/bin SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt TZ=Asia/Shanghai LANG=C.UTF-8
   EOF
   sed -i 's/^  //' $out/etc/ssh/sshd_config
 
@@ -104,7 +104,8 @@ pkgs.runCommand "hitohira-0.1.0" {
   ensure_dirs() {
     mkdir -p \
       /data/nix/store \
-      /data/nix/var/nix/profiles \
+      /data/nix/var/nix/profiles/per-user/kyaru \
+      /data/hitohira/home/.local/state/nix/profiles \
       /data/hitohira/home/.ssh \
       /data/hitohira/home/.local/bin \
       /data/hitohira/home/.config/nushell \
@@ -160,6 +161,7 @@ pkgs.runCommand "hitohira-0.1.0" {
 
       mkdir -p \
         "$NS_BASE/up/nix" \
+        "$NS_BASE/up/dev_host" \
         "$NS_BASE/up/home/kyaru" \
         "$NS_BASE/up/root" \
         "$NS_BASE/up/tmp" \
@@ -212,7 +214,7 @@ pkgs.runCommand "hitohira-0.1.0" {
   NIXCEOF
 
       cat > "$NS_BASE/up/etc/profile" <<PROFEOF
-  export PATH="$P/bin:$P/sbin:/home/kyaru/.local/bin:/system/bin:/data/adb/ksu/bin"
+  export PATH="/home/kyaru/.nix-profile/bin:/nix/var/nix/profiles/per-user/kyaru/profile/bin:$P/bin:$P/sbin:/home/kyaru/.local/bin:/system/bin:/data/adb/ksu/bin"
   export SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt
   export NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt
   export LANG=C.UTF-8
@@ -231,12 +233,28 @@ pkgs.runCommand "hitohira-0.1.0" {
 
       $MNT -t overlay overlay -o "lowerdir=/,upperdir=$NS_BASE/up,workdir=$NS_BASE/wk" "$NS_BASE/merged"
 
-      for d in dev proc sys data apex system vendor product system_ext mnt storage linkerconfig; do
+      for d in proc sys data apex system vendor product system_ext mnt storage linkerconfig; do
         if [ -d "/$d" ]; then
           mkdir -p "$NS_BASE/merged/$d" 2>/dev/null || true
           $MNT --rbind "/$d" "$NS_BASE/merged/$d" 2>/dev/null || true
         fi
       done
+
+      $MNT --rbind /dev "$NS_BASE/merged/dev_host"
+      $MNT -t tmpfs -o size=16M,mode=0755 tmpfs "$NS_BASE/merged/dev"
+      for item in /dev/*; do
+        name="''${item#/dev/}"
+        [ "$name" = "pts" ] || [ "$name" = "ptmx" ] || [ "$name" = "shm" ] && continue
+        ln -sf "/dev_host/$name" "$NS_BASE/merged/dev/$name"
+      done
+      mkdir -p "$NS_BASE/merged/dev/pts" "$NS_BASE/merged/dev/shm"
+      $MNT -t devpts -o newinstance,ptmxmode=0666,mode=0620 devpts "$NS_BASE/merged/dev/pts"
+      ln -sf pts/ptmx "$NS_BASE/merged/dev/ptmx"
+      $MNT -t tmpfs -o size=256M,mode=1777 tmpfs "$NS_BASE/merged/dev/shm"
+      ln -sf /proc/self/fd "$NS_BASE/merged/dev/fd"
+      ln -sf /proc/self/fd/0 "$NS_BASE/merged/dev/stdin"
+      ln -sf /proc/self/fd/1 "$NS_BASE/merged/dev/stdout"
+      ln -sf /proc/self/fd/2 "$NS_BASE/merged/dev/stderr"
 
       $MNT -t tmpfs -o size=256M,mode=1777 tmpfs "$NS_BASE/merged/tmp"
       $MNT -t tmpfs -o size=16M,mode=0755 tmpfs "$NS_BASE/merged/run"
@@ -256,7 +274,7 @@ pkgs.runCommand "hitohira-0.1.0" {
     echo "$dpid" > "$PIDFILE"
 
     i=0
-    while [ "$i" -lt 20 ]; do
+    while [ "$i" -lt 60 ]; do
       if is_running; then
         return 0
       fi
@@ -276,6 +294,16 @@ pkgs.runCommand "hitohira-0.1.0" {
       sleep 0.3
       [ -d "/proc/$pid" ] && kill -9 "$pid" 2>/dev/null || true
     fi
+    for p in /proc/[0-9]*; do
+      [ -r "$p/cmdline" ] || continue
+      cmdline="$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null || true)"
+      case "$cmdline" in
+        *"/profiles/hitohira/etc/ssh/sshd_config"*)
+          opid="''${p#/proc/}"
+          kill "$opid" 2>/dev/null || true
+          ;;
+      esac
+    done
     rm -f "$PIDFILE"
   }
 
@@ -338,17 +366,22 @@ pkgs.runCommand "hitohira-0.1.0" {
   "$CTL" start
   nspid="$(cat "$PIDFILE")"
 
+  term_val="''${TERM:-}"
+  if [ -z "$term_val" ] || [ "$term_val" = "dumb" ]; then
+    term_val="xterm-256color"
+  fi
+
   if [ "$#" -eq 0 ]; then
     exec env -i \
       HOME=/home/kyaru \
       USER=kyaru \
       LOGNAME=kyaru \
-      TERM="''${TERM:-xterm-256color}" \
+      TERM="$term_val" \
       LANG=C.UTF-8 \
       TZ=Asia/Shanghai \
       SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt \
       NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt \
-      PATH="$P/bin:$P/sbin:/home/kyaru/.local/bin:/system/bin:/data/adb/ksu/bin" \
+      PATH="/home/kyaru/.nix-profile/bin:/nix/var/nix/profiles/per-user/kyaru/profile/bin:$P/bin:$P/sbin:/home/kyaru/.local/bin:/system/bin:/data/adb/ksu/bin" \
       nsenter -t "$nspid" -m -- chroot "$MERGED" "$P/bin/bash" -c "cd /home/kyaru && exec '$P/bin/nu' -l"
   fi
 
@@ -356,12 +389,12 @@ pkgs.runCommand "hitohira-0.1.0" {
     HOME=/home/kyaru \
     USER=kyaru \
     LOGNAME=kyaru \
-    TERM="''${TERM:-xterm-256color}" \
+    TERM="$term_val" \
     LANG=C.UTF-8 \
     TZ=Asia/Shanghai \
     SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt \
     NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt \
-    PATH="$P/bin:$P/sbin:/home/kyaru/.local/bin:/system/bin:/data/adb/ksu/bin" \
+    PATH="/home/kyaru/.nix-profile/bin:/nix/var/nix/profiles/per-user/kyaru/profile/bin:$P/bin:$P/sbin:/home/kyaru/.local/bin:/system/bin:/data/adb/ksu/bin" \
     nsenter -t "$nspid" -m -- chroot "$MERGED" "$@"
   EOF
   sed -i 's/^  //' $out/bin/hitohira
