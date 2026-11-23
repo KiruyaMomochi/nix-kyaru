@@ -79,8 +79,6 @@ pkgs.runCommand "hitohira-0.1.0" {
   StrictModes yes
   UsePAM no
   PrintMotd no
-  ClientAliveInterval 30
-  ClientAliveCountMax 4
   Subsystem sftp internal-sftp
   SetEnv PATH=/nix/var/nix/profiles/hitohira/bin:/nix/var/nix/profiles/hitohira/sbin:/home/kyaru/.local/bin:/system/bin:/data/adb/ksu/bin SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt NIX_SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt TZ=Asia/Shanghai LANG=C.UTF-8
   EOF
