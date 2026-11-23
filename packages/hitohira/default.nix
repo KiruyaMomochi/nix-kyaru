@@ -28,6 +28,7 @@ let
     less
 
     nushell
+    helix
     starship
     openssh
     ripgrep
