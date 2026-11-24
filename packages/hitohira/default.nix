@@ -519,8 +519,8 @@ pkgs.runCommand "hitohira-0.1.0" {
   }
 
   cached_location() {
-    # Read existing provider caches only. Never register a location request.
-    timeout 4 /system/bin/dumpsys location 2>/dev/null | awk -v now="$(boottime_sec)" '
+    # Read existing provider caches as AID_SHELL (2000) so ColorOS does not redact coordinates.
+    timeout 4 /system/bin/su 2000 -c '/system/bin/dumpsys location' 2>/dev/null | awk -v now="$(boottime_sec)" '
       function seconds(t, a,n,i,total) {
         total=0;
         while (match(t, /[0-9]+(ms|d|h|m|s)/)) {
