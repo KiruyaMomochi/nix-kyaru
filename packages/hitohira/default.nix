@@ -43,6 +43,7 @@ let
     gitMinimal
     rsync
     tmux
+    wstunnel
     nix
   ];
 
@@ -267,6 +268,10 @@ pkgs.runCommand "hitohira-0.1.0" {
         chmod 0600 /data/hitohira/etc/ssh/ssh_host_ed25519_key
       fi
 
+      if [ -f /data/hitohira/etc/beacon.conf ] && [ -x "$P/bin/hitohira-beacon" ]; then
+        chroot "$NS_BASE/merged" "$P/bin/hitohira-beacon" </dev/null >> /data/hitohira/run/beacon.log 2>&1 &
+      fi
+
       exec chroot "$NS_BASE/merged" "$P/bin/sshd" -D -e -f "$P/etc/ssh/sshd_config"
     ' >> "$RUN_DIR/sshd.log" 2>&1 &
 
@@ -298,19 +303,22 @@ pkgs.runCommand "hitohira-0.1.0" {
       [ -r "$p/cmdline" ] || continue
       cmdline="$(tr '\0' ' ' < "$p/cmdline" 2>/dev/null || true)"
       case "$cmdline" in
-        *"/profiles/hitohira/etc/ssh/sshd_config"*)
+        *"/profiles/hitohira/etc/ssh/sshd_config"*|*"hitohira-beacon"*|*"wstunnel client"*)
           opid="''${p#/proc/}"
           kill "$opid" 2>/dev/null || true
           ;;
       esac
     done
-    rm -f "$PIDFILE"
+    rm -f "$PIDFILE" "$RUN_DIR/beacon.pid" "$RUN_DIR/wstunnel.pid"
   }
 
   do_reload() {
     if is_running; then
       pid="$(cat "$PIDFILE")"
       kill -HUP "$pid"
+      if [ -f /data/hitohira/etc/beacon.conf ] && [ -x /data/hitohira/current/bin/hitohira-beacon ]; then
+        nsenter -t "$pid" -m -- chroot "$NS_BASE/merged" /nix/var/nix/profiles/hitohira/bin/hitohira-beacon </dev/null >> "$RUN_DIR/beacon.log" 2>&1 &
+      fi
     else
       do_start
     fi
@@ -400,6 +408,169 @@ pkgs.runCommand "hitohira-0.1.0" {
   sed -i 's/^  //' $out/bin/hitohira
   chmod 0755 $out/bin/hitohira
 
+  cat > $out/bin/hitohira-beacon <<'EOF'
+  #!/nix/var/nix/profiles/hitohira/bin/bash
+  set -euo pipefail
+
+  P="/nix/var/nix/profiles/hitohira"
+  export PATH="$P/bin:$P/sbin:/system/bin"
+  export SSL_CERT_FILE=/etc/ssl/certs/ca-bundle.crt
+
+  CONF="/data/hitohira/etc/beacon.conf"
+  RUN_DIR="/data/hitohira/run"
+  PIDFILE="$RUN_DIR/beacon.pid"
+  WST_PIDFILE="$RUN_DIR/wstunnel.pid"
+  FIFO="$RUN_DIR/.beacon.fifo"
+
+  [ -f "$CONF" ] || exit 0
+  # shellcheck disable=SC1090
+  . "$CONF"
+  : "''${BEACON_DOMAIN:?}" "''${BEACON_SECRET:?}"
+  BEACON_HOST_TAG="''${BEACON_HOST_TAG:-pixel10}"
+  BEACON_REMOTE_PORT="''${BEACON_REMOTE_PORT:-18023}"
+  PING_INTERVAL="''${PING_INTERVAL:-180}"
+  ACTIVE_PING_INTERVAL="''${ACTIVE_PING_INTERVAL:-30}"
+
+  mkdir -p "$RUN_DIR"
+  if [ -f "$PIDFILE" ]; then
+    old="$(cat "$PIDFILE" 2>/dev/null || true)"
+    if [ -n "$old" ] && [ "$old" != "$$" ] && [ -d "/proc/$old" ]; then
+      kill "$old" 2>/dev/null || true
+      sleep 0.2
+    fi
+  fi
+  echo "$$" > "$PIDFILE"
+
+  stop_tunnel() {
+    if [ -f "$WST_PIDFILE" ]; then
+      wp="$(cat "$WST_PIDFILE" 2>/dev/null || true)"
+      if [ -n "$wp" ] && [ -d "/proc/$wp" ]; then
+        kill "$wp" 2>/dev/null || true
+      fi
+      rm -f "$WST_PIDFILE"
+    fi
+  }
+  trap 'stop_tunnel; rm -f "$PIDFILE"' EXIT INT TERM
+  stop_tunnel
+
+  rm -f "$FIFO"
+  mkfifo -m 0600 "$FIFO"
+  exec 9<>"$FIFO"
+
+  boottime_sec() {
+    local raw
+    read -r raw _ < /proc/uptime
+    echo "''${raw%%.*}"
+  }
+
+  tunnel_alive() {
+    [ -f "$WST_PIDFILE" ] || return 1
+    local wp
+    wp="$(cat "$WST_PIDFILE" 2>/dev/null || true)"
+    [ -n "$wp" ] && [ -d "/proc/$wp" ]
+  }
+
+  list_candidates() {
+    ip rule show 2>/dev/null | awk '
+      /^11000:.*oif / {
+        dev=""; tbl="";
+        for (i=1; i<=NF; i++) {
+          if ($i == "oif") dev=$(i+1);
+          if ($i == "lookup") tbl=$(i+1);
+        }
+        if (dev != "" && dev != "dummy0" && tbl != "") dev_for_tbl[tbl] = dev;
+      }
+      /^16000:.*fwmark / {
+        mk=""; tbl="";
+        for (i=1; i<=NF; i++) {
+          if ($i == "fwmark") { split($(i+1), a, "/"); mk=a[1]; }
+          if ($i == "lookup") tbl=$(i+1);
+        }
+        if (tbl in dev_for_tbl && mk != "") {
+          d = dev_for_tbl[tbl];
+          prio = (d ~ /^wlan/) ? 1 : 2;
+          print prio, d, mk;
+        }
+      }
+    ' | sort -n | awk '{print $2, $3}'
+    echo "default 0x0"
+  }
+
+  wst_deadline=0
+  last_ping=-99999
+
+  check_once() {
+    local bat="" chg="" out body cf_ip want ttl now mark_dec ws_target
+    bat="$(cat /sys/class/power_supply/battery/capacity 2>/dev/null || true)"
+    chg="$(cat /sys/class/power_supply/battery/status 2>/dev/null || true)"
+
+    while read -r dev mark_hex; do
+      [ -n "$dev" ] || continue
+      local iface_args=()
+      if [ "$dev" != "default" ]; then
+        iface_args=(--interface "$dev")
+      fi
+      if out="$(curl "''${iface_args[@]}" -fsSm 6 -w '\n%{remote_ip}' \
+        "https://''${BEACON_DOMAIN}/''${BEACON_SECRET}/ping?bat=''${bat}&chg=''${chg}&dev=''${dev}&host=''${BEACON_HOST_TAG}" 2>/dev/null)"; then
+        cf_ip="''${out##*$'\n'}"
+        body="''${out%$'\n'*}"
+        want="$(printf '%s' "$body" | jq -r '.connect // 0' 2>/dev/null || echo 0)"
+        ttl="$(printf '%s' "$body" | jq -r '.ttl // 600' 2>/dev/null || echo 600)"
+        now="$(boottime_sec)"
+        if [ "$want" = "1" ]; then
+          wst_deadline=$(( now + ttl ))
+          if ! tunnel_alive; then
+            case "$cf_ip" in
+              *:*) ws_target="[''${cf_ip}]:443" ;;
+              *)   ws_target="''${cf_ip}:443" ;;
+            esac
+            local mark_args=()
+            mark_dec=$(( (mark_hex) | 0x20000 ))
+            if [ $(( mark_hex )) -gt 0 ]; then
+              mark_args=(--socket-so-mark "$mark_dec")
+            fi
+            wstunnel client --no-color \
+              --tls-verify-certificate \
+              --tls-sni-override "$BEACON_DOMAIN" \
+              -H "Host: $BEACON_DOMAIN" \
+              "''${mark_args[@]}" \
+              -P "$BEACON_SECRET" \
+              -R "tcp://127.0.0.1:''${BEACON_REMOTE_PORT}:127.0.0.1:8023" \
+              "wss://''${ws_target}" </dev/null >> "$RUN_DIR/wstunnel.log" 2>&1 &
+            echo "$!" > "$WST_PIDFILE"
+          fi
+        else
+          wst_deadline=0
+          stop_tunnel
+        fi
+        return 0
+      fi
+    done < <(list_candidates)
+    return 1
+  }
+
+  while true; do
+    now="$(boottime_sec)"
+    if tunnel_alive; then
+      if [ "$now" -ge "$wst_deadline" ]; then
+        stop_tunnel
+        wst_deadline=0
+      elif [ $(( now - last_ping )) -ge "$ACTIVE_PING_INTERVAL" ]; then
+        last_ping="$now"
+        check_once || true
+      fi
+    else
+      if [ $(( now - last_ping )) -ge "$PING_INTERVAL" ]; then
+        last_ping="$now"
+        check_once || true
+      fi
+    fi
+    read -r -t 5 -u 9 || true
+  done
+  EOF
+  sed -i 's/^  //' $out/bin/hitohira-beacon
+  chmod 0755 $out/bin/hitohira-beacon
+
   cat > $out/bin/hitohira-activate <<EOF
   #!/system/bin/sh
   set -eu
@@ -434,6 +605,9 @@ pkgs.runCommand "hitohira-0.1.0" {
     /data/hitohira/current/bin/hitohira-ctl reload
   elif [ -f /data/hitohira/run/ns.pid ]; then
     kill -HUP "\$(cat /data/hitohira/run/ns.pid)" 2>/dev/null || true
+    if [ -f /data/hitohira/etc/beacon.conf ] && [ -x /nix/var/nix/profiles/hitohira/bin/hitohira-beacon ]; then
+      /nix/var/nix/profiles/hitohira/bin/hitohira-beacon </dev/null >> /data/hitohira/run/beacon.log 2>&1 &
+    fi
   fi
   echo "hitohira activated -> \$SELF_STORE"
   EOF
