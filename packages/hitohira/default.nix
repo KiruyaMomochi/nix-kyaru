@@ -450,7 +450,8 @@ pkgs.runCommand "hitohira-0.1.0" {
       rm -f "$WST_PIDFILE"
     fi
   }
-  trap 'stop_tunnel; rm -f "$PIDFILE"' EXIT INT TERM
+  trap 'stop_tunnel; rm -f "$PIDFILE"' EXIT
+  trap 'exit 0' INT TERM
   stop_tunnel
 
   rm -f "$FIFO"
@@ -471,16 +472,24 @@ pkgs.runCommand "hitohira-0.1.0" {
   }
 
   list_candidates() {
-    ip rule show 2>/dev/null | awk '
-      /^11000:.*oif / {
+    # Prefer ordinary routing without a VPN; retain physical-interface escape paths.
+    local rules vpn=0
+    rules="$(ip rule show 2>/dev/null)"
+    if printf '%s\n' "$rules" | grep -Eq 'fwmark (0x)?0/0x20000.*iif lo'; then
+      vpn=1
+    else
+      echo "default 0x0"
+    fi
+    printf '%s\n' "$rules" | awk '
+      /oif / && /uidrange 0-0/ {
         dev=""; tbl="";
         for (i=1; i<=NF; i++) {
           if ($i == "oif") dev=$(i+1);
           if ($i == "lookup") tbl=$(i+1);
         }
-        if (dev != "" && dev != "dummy0" && tbl != "") dev_for_tbl[tbl] = dev;
+        if (dev ~ /^(wlan|rmnet|eth)/ && tbl != "") dev_for_tbl[tbl] = dev;
       }
-      /^16000:.*fwmark / {
+      /fwmark / && /iif lo/ && !/oif / {
         mk=""; tbl="";
         for (i=1; i<=NF; i++) {
           if ($i == "fwmark") { split($(i+1), a, "/"); mk=a[1]; }
@@ -492,8 +501,39 @@ pkgs.runCommand "hitohira-0.1.0" {
           print prio, d, mk;
         }
       }
-    ' | sort -n | awk '{print $2, $3}'
-    echo "default 0x0"
+    ' | sort -n | awk '!seen[$2]++ {print $2, $3}'
+    [ "$vpn" = 0 ] || echo "default 0x0"
+  }
+
+  cached_location() {
+    # Read existing provider caches only. Never register a location request.
+    timeout 4 /system/bin/dumpsys location 2>/dev/null | awk -v now="$(boottime_sec)" '
+      function seconds(t, a,n,i,total) {
+        total=0;
+        while (match(t, /[0-9]+(ms|d|h|m|s)/)) {
+          n=substr(t,RSTART,RLENGTH); t=substr(t,RSTART+RLENGTH);
+          if (n ~ /ms$/) total+=n/1000;
+          else if (n ~ /d$/) total+=n*86400;
+          else if (n ~ /h$/) total+=n*3600;
+          else if (n ~ /m$/) total+=n*60;
+          else total+=n;
+        }
+        return total;
+      }
+      /last location=Location\[/ {
+        sub(/^.*Location\[/, "");
+        provider=$1; split($2, coord, ","); et=""; acc="";
+        for(i=3;i<=NF;i++) {
+          if ($i ~ /^et=/) {et=$i; sub(/^et=/,"",et); sub(/\].*/,"",et)}
+          if ($i ~ /^hAcc=/) {acc=$i; sub(/^hAcc=/,"",acc)}
+        }
+        stamp=seconds(et);
+        if (et != "" && stamp > latest && stamp <= now+2) {
+          latest=stamp; lat=coord[1]; lon=coord[2]; p=provider; a=acc; e=et;
+        }
+      }
+      END {if(lat != "") printf "%s %s %s %s %s %.0f\n",lat,lon,p,a,e,(now>latest?now-latest:0)}
+    ' || true
   }
 
   wst_deadline=0
@@ -501,6 +541,8 @@ pkgs.runCommand "hitohira-0.1.0" {
 
   check_once() {
     local bat="" chg="" out body cf_ip want ttl now mark_dec ws_target
+    local lat="" lon="" provider="" accuracy="" elapsed="" loc_age=""
+    read -r lat lon provider accuracy elapsed loc_age < <(cached_location) || true
     bat="$(cat /sys/class/power_supply/battery/capacity 2>/dev/null || true)"
     chg="$(cat /sys/class/power_supply/battery/status 2>/dev/null || true)"
 
@@ -510,8 +552,14 @@ pkgs.runCommand "hitohira-0.1.0" {
       if [ "$dev" != "default" ]; then
         iface_args=(--interface "$dev")
       fi
-      if out="$(curl "''${iface_args[@]}" -fsSm 6 -w '\n%{remote_ip}' \
-        "https://''${BEACON_DOMAIN}/''${BEACON_SECRET}/ping?bat=''${bat}&chg=''${chg}&dev=''${dev}&host=''${BEACON_HOST_TAG}" 2>/dev/null)"; then
+      if out="$(curl "''${iface_args[@]}" -fsSm 6 -w '\n%{remote_ip}' --get \
+        --data-urlencode "bat=$bat" --data-urlencode "chg=$chg" \
+        --data-urlencode "dev=$dev" --data-urlencode "host=$BEACON_HOST_TAG" \
+        --data-urlencode "lat=$lat" --data-urlencode "lon=$lon" \
+        --data-urlencode "provider=$provider" --data-urlencode "accuracy=$accuracy" \
+        --data-urlencode "elapsed=$elapsed" --data-urlencode "loc_age=$loc_age" \
+        --data-urlencode "boot_id=$(cat /proc/sys/kernel/random/boot_id)" \
+        "https://''${BEACON_DOMAIN}/''${BEACON_SECRET}/ping" 2>/dev/null)"; then
         cf_ip="''${out##*$'\n'}"
         body="''${out%$'\n'*}"
         want="$(printf '%s' "$body" | jq -r '.connect // 0' 2>/dev/null || echo 0)"

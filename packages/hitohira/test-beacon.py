@@ -1,0 +1,54 @@
+"""Test the embedded beacon's routing and passive-cache parsers without a phone."""
+import subprocess
+import unittest
+from pathlib import Path
+
+SOURCE = Path(__file__).with_name('default.nix').read_text()
+
+
+def function(name):
+    start = SOURCE.index('  ' + name + '() {')
+    end = SOURCE.index('\n  }', start) + len('\n  }')
+    return SOURCE[start:end].replace("''${", "${")
+
+
+class Parsers(unittest.TestCase):
+    def candidates(self, rules):
+        script = 'ip() { cat <<\'RULES\'\n' + rules + '\nRULES\n}\n'
+        script += function('list_candidates') + '\nlist_candidates\n'
+        return subprocess.check_output(['bash', '-c', script], text=True).splitlines()
+
+    def test_android16_tailscale_and_android17_vpn(self):
+        rules = '''5210: from all fwmark 0x80000/0xff0000 lookup main
+11000: from all iif lo oif dummy0 uidrange 0-0 lookup dummy0
+11000: from all iif lo oif wlan0 uidrange 0-0 lookup wlan0
+11000: from all iif lo oif rmnet_data2 uidrange 0-0 lookup rmnet_data2
+16000: from all fwmark 0x101a9/0x1ffff iif lo lookup wlan0
+16000: from all fwmark 0xd019a/0xdffff iif lo lookup rmnet_data2'''
+        self.assertEqual(self.candidates(rules),
+                         ['default 0x0', 'wlan0 0x101a9', 'rmnet_data2 0xd019a'])
+        self.assertEqual(self.candidates(rules + '\n13000: from all fwmark 0/0x20000 iif lo lookup tun0'),
+                         ['wlan0 0x101a9', 'rmnet_data2 0xd019a', 'default 0x0'])
+
+    def test_no_rules_has_normal_route(self):
+        self.assertEqual(self.candidates(''), ['default 0x0'])
+
+    def test_changed_rule_priorities(self):
+        self.assertEqual(self.candidates('''11500: from all iif lo oif wlan0 uidrange 0-0 lookup 101
+16500: from all fwmark 0x10065/0x1ffff iif lo lookup 101'''),
+                         ['default 0x0', 'wlan0 0x10065'])
+
+    def test_newest_cache_not_last_provider_and_mask_preserved(self):
+        parser = function('cached_location').replace(
+            'timeout 4 /system/bin/dumpsys location', 'cat')
+        data = ''' last location=Location[network 31.23****,121.53**** hAcc=24.0 et=+1d1h2m3s222ms]
+ last location=Location[gps 31.100000,121.400000 hAcc=3 et=+1d0h1s]
+ last location=Location[fused 31.200000,121.500000 hAcc=10 et=+1h]
+'''
+        script = 'boottime_sec() { echo 90200; }\n' + parser + '\ncached_location\n'
+        result = subprocess.check_output(['bash', '-c', script], input=data, text=True)
+        self.assertEqual(result.strip(), '31.23**** 121.53**** network 24.0 +1d1h2m3s222ms 77')
+
+
+if __name__ == '__main__':
+    unittest.main()
