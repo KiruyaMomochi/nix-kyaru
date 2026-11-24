@@ -47,6 +47,8 @@ let
     nix
   ];
 
+  locationJar = import ./location.nix { inherit pkgs; };
+
   pkgPaths = lib.concatStringsSep " " (map (p: "${p}") runtimePackages);
 in
 pkgs.runCommand "hitohira-0.1.0" {
@@ -67,6 +69,27 @@ pkgs.runCommand "hitohira-0.1.0" {
   done
 
   ln -sf ${armPkgs.cacert}/etc/ssl/certs/ca-bundle.crt $out/etc/ssl/certs/ca-bundle.crt
+
+  mkdir -p $out/share/hitohira
+  cp ${locationJar} $out/share/hitohira/location.jar
+  cat > $out/bin/hitohira-loc <<'EOF'
+  #!/nix/var/nix/profiles/hitohira/bin/bash
+  set -euo pipefail
+  P=/nix/var/nix/profiles/hitohira
+  aenv=()
+  # init keeps its original environment; system_server has the later runtime exports.
+  for source in 1 "$("$P/bin/pgrep" -xo system_server)"; do
+    while IFS= read -r -d "" kv; do
+      case "$kv" in ANDROID_*=*|*CLASSPATH=*) aenv+=("$kv");; esac
+    done < "/proc/$source/environ"
+  done
+  exec "$P/bin/env" -i "''${aenv[@]}" PATH=/system/bin \
+    CLASSPATH="$P/share/hitohira/location.jar" \
+    "$P/bin/setpriv" --reuid=2000 --regid=2000 --clear-groups \
+    /system/bin/app_process /system/bin HitohiraLoc "$@"
+  EOF
+  sed -i 's/^  //' $out/bin/hitohira-loc
+  chmod 0755 $out/bin/hitohira-loc
 
   cat > $out/etc/ssh/sshd_config <<'EOF'
   Port 8023
@@ -317,7 +340,7 @@ pkgs.runCommand "hitohira-0.1.0" {
       pid="$(cat "$PIDFILE")"
       kill -HUP "$pid"
       if [ -f /data/hitohira/etc/beacon.conf ] && [ -x /data/hitohira/current/bin/hitohira-beacon ]; then
-        nsenter -t "$pid" -m -- chroot "$NS_BASE/merged" /nix/var/nix/profiles/hitohira/bin/hitohira-beacon </dev/null >> "$RUN_DIR/beacon.log" 2>&1 &
+        /system/bin/nohup nsenter -t "$pid" -m -- chroot "$NS_BASE/merged" /nix/var/nix/profiles/hitohira/bin/hitohira-beacon </dev/null >> "$RUN_DIR/beacon.log" 2>&1 &
       fi
     else
       do_start
@@ -519,51 +542,9 @@ pkgs.runCommand "hitohira-0.1.0" {
   }
 
   cached_location() {
-    # Read existing provider caches only. Never register a location request.
-    local res tbin="/data/data/com.termux/files/usr/bin/termux-location"
-    res="$(timeout 4 /system/bin/dumpsys location 2>/dev/null | awk -v now="$(boottime_sec)" '
-      function seconds(t, a,n,i,total) {
-        total=0;
-        while (match(t, /[0-9]+(ms|d|h|m|s)/)) {
-          n=substr(t,RSTART,RLENGTH); t=substr(t,RSTART+RLENGTH);
-          if (n ~ /ms$/) total+=n/1000;
-          else if (n ~ /d$/) total+=n*86400;
-          else if (n ~ /h$/) total+=n*3600;
-          else if (n ~ /m$/) total+=n*60;
-          else total+=n;
-        }
-        return total;
-      }
-      /Location\[[a-zA-Z0-9_]+ -?[0-9.]+,-?[0-9.]+/ {
-        line=$0;
-        sub(/^.*Location\[/, "", line);
-        n=split(line, f, " ");
-        provider=f[1]; split(f[2], coord, ","); et=""; acc="";
-        for(i=3;i<=n;i++) {
-          if (f[i] ~ /^et=/) {et=f[i]; sub(/^et=/,"",et); sub(/\].*/,"",et)}
-          if (f[i] ~ /^hAcc=/) {acc=f[i]; sub(/^hAcc=/,"",acc)}
-        }
-        stamp=seconds(et);
-        if (et != "" && coord[1] !~ /\*/ && stamp > latest && stamp <= now+2) {
-          latest=stamp; lat=coord[1]; lon=coord[2]; p=provider; a=acc; e=et;
-        }
-      }
-      END {if(lat != "") printf "%s %s %s %s %s %.0f\n",lat,lon,p,a,e,(now>latest?now-latest:0)}
-    ' || true)"
-    if [ -z "$res" ] && [ -x "$tbin" ]; then
-      local raw
-      local -a aenv=()
-      if [ -r /proc/1/environ ]; then
-        while IFS= read -r kv; do
-          [ -n "$kv" ] && aenv+=("$kv")
-        done < <(tr '\0' '\n' < /proc/1/environ | grep -E '^(ANDROID_|.*CLASSPATH=)' || true)
-      fi
-      raw="$(timeout 8 env "''${aenv[@]}" LD_LIBRARY_PATH=/data/data/com.termux/files/usr/lib PATH=/data/data/com.termux/files/usr/bin:/system/bin "$tbin" -p network -r last 2>/dev/null || true)"
-      if [ -n "$raw" ]; then
-        res="$(printf '%s' "$raw" | jq -r 'select(.latitude != null and .longitude != null) | "\(.latitude) \(.longitude) \(.provider // "network") \(.accuracy // "") cached \(((.elapsedMs // 0) / 1000) | floor)"' 2>/dev/null || true)"
-      fi
-    fi
-    [ -z "$res" ] || printf '%s\n' "$res"
+    # Cached mode never registers a request or starts location hardware.
+    timeout 5 "$P/bin/hitohira-loc" 2>/dev/null |
+      jq -r '[.lat, .lon, .provider, .accuracy_m, .elapsed_ms, (.age_s | floor)] | @tsv' || true
   }
 
   wst_deadline=0
@@ -684,7 +665,7 @@ pkgs.runCommand "hitohira-0.1.0" {
   elif [ -f /data/hitohira/run/ns.pid ]; then
     kill -HUP "\$(cat /data/hitohira/run/ns.pid)" 2>/dev/null || true
     if [ -f /data/hitohira/etc/beacon.conf ] && [ -x /nix/var/nix/profiles/hitohira/bin/hitohira-beacon ]; then
-      /nix/var/nix/profiles/hitohira/bin/hitohira-beacon </dev/null >> /data/hitohira/run/beacon.log 2>&1 &
+      /nix/var/nix/profiles/hitohira/bin/nohup /nix/var/nix/profiles/hitohira/bin/hitohira-beacon </dev/null >> /data/hitohira/run/beacon.log 2>&1 &
     fi
   fi
   echo "hitohira activated -> \$SELF_STORE"
