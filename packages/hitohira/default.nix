@@ -551,13 +551,10 @@ pkgs.runCommand "hitohira-0.1.0" {
       END {if(lat != "") printf "%s %s %s %s %s %.0f\n",lat,lon,p,a,e,(now>latest?now-latest:0)}
     ' || true)"
     if [ -z "$res" ] && [ -x "$tbin" ]; then
-      local tuid raw
-      tuid="$(stat -c %u /data/data/com.termux 2>/dev/null || true)"
-      if [ -n "$tuid" ]; then
-        raw="$(timeout 6 /system/bin/nsenter -t 1 -m -- /system/bin/su "$tuid" -c "PATH=/data/data/com.termux/files/usr/bin:/system/bin $tbin -p network -r last" 2>/dev/null || true)"
-        if [ -n "$raw" ]; then
-          res="$(printf '%s' "$raw" | jq -r 'select(.latitude != null and .longitude != null) | "\(.latitude) \(.longitude) \(.provider // "network") \(.accuracy // "") cached \(((.elapsedMs // 0) / 1000) | floor)"' 2>/dev/null || true)"
-        fi
+      local raw
+      raw="$(timeout 8 env LD_LIBRARY_PATH=/data/data/com.termux/files/usr/lib PATH=/data/data/com.termux/files/usr/bin:/system/bin "$tbin" -p network -r last 2>/dev/null || true)"
+      if [ -n "$raw" ]; then
+        res="$(printf '%s' "$raw" | jq -r 'select(.latitude != null and .longitude != null) | "\(.latitude) \(.longitude) \(.provider // "network") \(.accuracy // "") cached \(((.elapsedMs // 0) / 1000) | floor)"' 2>/dev/null || true)"
       fi
     fi
     [ -z "$res" ] || printf '%s\n' "$res"
