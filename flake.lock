@@ -157,11 +157,11 @@
         "uv2nix": "uv2nix"
       },
       "locked": {
-        "lastModified": 1795308482,
-        "narHash": "sha256-Ooz9hUK1fBWWsIiTYiBZ9sDO5xuqFdYjM3K5yzT7nhw=",
+        "lastModified": 1795515948,
+        "narHash": "sha256-0nFci1glXtK2G84OSPRZ6tfhDLoBgVoG8fEJksLDYf4=",
         "owner": "KiruyaMomochi",
         "repo": "hermes-agent",
-        "rev": "6bbe258e150fbc5e0ffe4076baf583c9e33c6607",
+        "rev": "b9786f3592c9d6f36263297993053a4cdca00e54",
         "type": "github"
       },
       "original": {
