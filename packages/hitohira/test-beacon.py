@@ -30,6 +30,17 @@ class Parsers(unittest.TestCase):
         self.assertEqual(self.candidates(rules + '\n13000: from all fwmark 0/0x20000 iif lo lookup tun0'),
                          ['wlan0 0x101a9', 'rmnet_data2 0xd019a', 'default 0x0'])
 
+    def test_stale_cleanup_cannot_remove_replacement_pid(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            script = 'PIDFILE=' + directory + '/beacon.pid\n'
+            script += 'stop_tunnel() { echo stopped; }\n'
+            script += function('cleanup') + '\n'
+            script += 'echo replacement > "$PIDFILE"; cleanup; cat "$PIDFILE"\n'
+            script += 'echo $$ > "$PIDFILE"; cleanup; test ! -e "$PIDFILE"\n'
+            result = subprocess.check_output(['bash', '-c', script], text=True)
+            self.assertEqual(result.splitlines(), ['replacement', 'stopped'])
+
     def test_no_rules_has_normal_route(self):
         self.assertEqual(self.candidates(''), ['default 0x0'])
 

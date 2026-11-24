@@ -434,9 +434,16 @@ pkgs.runCommand "hitohira-0.1.0" {
   mkdir -p "$RUN_DIR"
   if [ -f "$PIDFILE" ]; then
     old="$(cat "$PIDFILE" 2>/dev/null || true)"
-    if [ -n "$old" ] && [ "$old" != "$$" ] && [ -d "/proc/$old" ]; then
+    if [ -n "$old" ] && [ "$old" != "$$" ] &&
+       grep -zFxq "$P/bin/hitohira-beacon" "/proc/$old/cmdline" 2>/dev/null; then
       kill "$old" 2>/dev/null || true
-      sleep 0.2
+      # Bash may defer TERM while waiting for curl. Do not replace shared state
+      # until its EXIT cleanup has finished (otherwise it can unlink our PID).
+      for ((i=0; i<100; i++)); do
+        kill -0 "$old" 2>/dev/null || break
+        sleep 0.1
+      done
+      kill -0 "$old" 2>/dev/null && kill -9 "$old" 2>/dev/null || true
     fi
   fi
   echo "$$" > "$PIDFILE"
@@ -450,7 +457,13 @@ pkgs.runCommand "hitohira-0.1.0" {
       rm -f "$WST_PIDFILE"
     fi
   }
-  trap 'stop_tunnel; rm -f "$PIDFILE"' EXIT
+  cleanup() {
+    if [ "$(cat "$PIDFILE" 2>/dev/null || true)" = "$$" ]; then
+      stop_tunnel
+      rm -f "$PIDFILE"
+    fi
+  }
+  trap cleanup EXIT
   trap 'exit 0' INT TERM
   stop_tunnel
 
