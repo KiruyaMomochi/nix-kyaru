@@ -552,7 +552,13 @@ pkgs.runCommand "hitohira-0.1.0" {
     ' || true)"
     if [ -z "$res" ] && [ -x "$tbin" ]; then
       local raw
-      raw="$(timeout 8 env LD_LIBRARY_PATH=/data/data/com.termux/files/usr/lib PATH=/data/data/com.termux/files/usr/bin:/system/bin "$tbin" -p network -r last 2>/dev/null || true)"
+      local -a aenv=()
+      if [ -r /proc/1/environ ]; then
+        while IFS= read -r kv; do
+          [ -n "$kv" ] && aenv+=("$kv")
+        done < <(tr '\0' '\n' < /proc/1/environ | grep -E '^(ANDROID_|.*CLASSPATH=)' || true)
+      fi
+      raw="$(timeout 8 env "''${aenv[@]}" LD_LIBRARY_PATH=/data/data/com.termux/files/usr/lib PATH=/data/data/com.termux/files/usr/bin:/system/bin "$tbin" -p network -r last 2>/dev/null || true)"
       if [ -n "$raw" ]; then
         res="$(printf '%s' "$raw" | jq -r 'select(.latitude != null and .longitude != null) | "\(.latitude) \(.longitude) \(.provider // "network") \(.accuracy // "") cached \(((.elapsedMs // 0) / 1000) | floor)"' 2>/dev/null || true)"
       fi
