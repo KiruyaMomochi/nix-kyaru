@@ -519,8 +519,9 @@ pkgs.runCommand "hitohira-0.1.0" {
   }
 
   cached_location() {
-    # Read existing provider caches as AID_SHELL (2000) so ColorOS does not redact coordinates.
-    timeout 4 /system/bin/su 2000 -c '/system/bin/dumpsys location' 2>/dev/null | awk -v now="$(boottime_sec)" '
+    # Read existing provider caches only. Never register a location request.
+    local res tbin="/data/data/com.termux/files/usr/bin/termux-location"
+    res="$(timeout 4 /system/bin/dumpsys location 2>/dev/null | awk -v now="$(boottime_sec)" '
       function seconds(t, a,n,i,total) {
         total=0;
         while (match(t, /[0-9]+(ms|d|h|m|s)/)) {
@@ -548,7 +549,18 @@ pkgs.runCommand "hitohira-0.1.0" {
         }
       }
       END {if(lat != "") printf "%s %s %s %s %s %.0f\n",lat,lon,p,a,e,(now>latest?now-latest:0)}
-    ' || true
+    ' || true)"
+    if [ -z "$res" ] && [ -x "$tbin" ]; then
+      local tuid raw
+      tuid="$(stat -c %u /data/data/com.termux 2>/dev/null || true)"
+      if [ -n "$tuid" ]; then
+        raw="$(timeout 6 /system/bin/nsenter -t 1 -m -- /system/bin/su "$tuid" -c "PATH=/data/data/com.termux/files/usr/bin:/system/bin $tbin -p network -r last" 2>/dev/null || true)"
+        if [ -n "$raw" ]; then
+          res="$(printf '%s' "$raw" | jq -r 'select(.latitude != null and .longitude != null) | "\(.latitude) \(.longitude) \(.provider // "network") \(.accuracy // "") cached \(((.elapsedMs // 0) / 1000) | floor)"' 2>/dev/null || true)"
+        fi
+      fi
+    fi
+    [ -z "$res" ] || printf '%s\n' "$res"
   }
 
   wst_deadline=0

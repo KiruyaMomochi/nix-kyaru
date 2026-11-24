@@ -51,7 +51,7 @@ class Parsers(unittest.TestCase):
 
     def test_prefers_unmasked_precise_location_over_coloros_masked_summary(self):
         parser = function('cached_location').replace(
-            "timeout 4 /system/bin/su 2000 -c '/system/bin/dumpsys location'", 'cat')
+            'timeout 4 /system/bin/dumpsys location', 'cat')
         data = ''' last location=Location[network 31.23****,121.53**** hAcc=24.0 et=+1d1h2m3s222ms]
  Historical Locations:
    Location[network 31.225812,121.529274 hAcc=24.0 et=+1d1h2m3s222ms]
