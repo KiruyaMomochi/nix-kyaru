@@ -49,16 +49,17 @@ class Parsers(unittest.TestCase):
 16500: from all fwmark 0x10065/0x1ffff iif lo lookup 101'''),
                          ['default 0x0', 'wlan0 0x10065'])
 
-    def test_newest_cache_not_last_provider_and_mask_preserved(self):
+    def test_prefers_unmasked_precise_location_over_coloros_masked_summary(self):
         parser = function('cached_location').replace(
             'timeout 4 /system/bin/dumpsys location', 'cat')
         data = ''' last location=Location[network 31.23****,121.53**** hAcc=24.0 et=+1d1h2m3s222ms]
- last location=Location[gps 31.100000,121.400000 hAcc=3 et=+1d0h1s]
- last location=Location[fused 31.200000,121.500000 hAcc=10 et=+1h]
+ Historical Locations:
+   Location[network 31.225812,121.529274 hAcc=24.0 et=+1d1h2m3s222ms]
+   Location[gps 31.100000,121.400000 hAcc=3 et=+1d0h1s]
 '''
         script = 'boottime_sec() { echo 90200; }\n' + parser + '\ncached_location\n'
         result = subprocess.check_output(['bash', '-c', script], input=data, text=True)
-        self.assertEqual(result.strip(), '31.23**** 121.53**** network 24.0 +1d1h2m3s222ms 77')
+        self.assertEqual(result.strip(), '31.225812 121.529274 network 24.0 +1d1h2m3s222ms 77')
 
 
 if __name__ == '__main__':

@@ -533,15 +533,17 @@ pkgs.runCommand "hitohira-0.1.0" {
         }
         return total;
       }
-      /last location=Location\[/ {
-        sub(/^.*Location\[/, "");
-        provider=$1; split($2, coord, ","); et=""; acc="";
-        for(i=3;i<=NF;i++) {
-          if ($i ~ /^et=/) {et=$i; sub(/^et=/,"",et); sub(/\].*/,"",et)}
-          if ($i ~ /^hAcc=/) {acc=$i; sub(/^hAcc=/,"",acc)}
+      /Location\[[a-zA-Z0-9_]+ -?[0-9.]+,-?[0-9.]+/ {
+        line=$0;
+        sub(/^.*Location\[/, "", line);
+        n=split(line, f, " ");
+        provider=f[1]; split(f[2], coord, ","); et=""; acc="";
+        for(i=3;i<=n;i++) {
+          if (f[i] ~ /^et=/) {et=f[i]; sub(/^et=/,"",et); sub(/\].*/,"",et)}
+          if (f[i] ~ /^hAcc=/) {acc=f[i]; sub(/^hAcc=/,"",acc)}
         }
         stamp=seconds(et);
-        if (et != "" && stamp > latest && stamp <= now+2) {
+        if (et != "" && coord[1] !~ /\*/ && stamp > latest && stamp <= now+2) {
           latest=stamp; lat=coord[1]; lon=coord[2]; p=provider; a=acc; e=et;
         }
       }
