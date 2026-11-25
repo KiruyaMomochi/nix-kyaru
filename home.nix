@@ -65,7 +65,6 @@
       cachix
       nix-output-monitor
       expect
-      nh
       (pkgs.writeShellScriptBin "manix" ''
         export NIX_PATH="/home/${config.home.username}/.nix-defexpr/50-home-manager''${NIX_PATH:+:$NIX_PATH}"
         exec ${lib.getExe pkgs.manix} "$@"
