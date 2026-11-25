@@ -20,6 +20,7 @@ in
     services.gpg-agent.enable = lib.mkForce false;
     services.ssh-agent.enable = lib.mkForce false;
     services.vscode-server.enable = lib.mkForce false;
+    programs.starship.settings.container.disabled = true;
 
     nix.settings = {
       sandbox = false;
