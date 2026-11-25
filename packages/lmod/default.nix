@@ -30,11 +30,11 @@ let
 in
 stdenv.mkDerivation (finalAttrs: {
   pname = "Lmod";
-  version = "9.4.5";
+  version = "9.5";
 
   src = fetchurl {
     url = "https://github.com/TACC/Lmod/archive/${finalAttrs.version}.tar.gz";
-    hash = "sha256-BSkreh2ShahpEpcm8UKfhjk/4nS/EtMRgo4W3yfNqvM=";
+    hash = "sha256-hUcsFVkKL12J/FwVzxRG9oxeFHniscK9DkamitHFBKw=";
   };
 
   nativeBuildInputs = [ pkg-config ];
