@@ -274,12 +274,11 @@ local mainMod = "SUPER" -- Sets "Windows" key as main modifier
 -- Example binds, see https://wiki.hypr.land/Configuring/Basics/Binds/ for more
 hl.bind(mainMod .. " + T", hl.dsp.exec_cmd(terminal))
 hl.bind(mainMod .. " + Q", hl.dsp.window.close())
-hl.bind(mainMod .. " + M", hl.dsp.exec_cmd("command -v hyprshutdown >/dev/null 2>&1 && hyprshutdown || hyprctl dispatch 'hl.dsp.exit()'"))
+hl.bind(mainMod .. " + SHIFT + E", hl.dsp.exec_cmd("command -v hyprshutdown >/dev/null 2>&1 && hyprshutdown || hyprctl dispatch 'hl.dsp.exit()'"))
 hl.bind(mainMod .. " + E", hl.dsp.exec_cmd(fileManager))
 hl.bind(mainMod .. " + V", hl.dsp.window.float({ action = "toggle" }))
-hl.bind(mainMod .. " + F", hl.dsp.window.fullscreen())
-hl.bind(mainMod .. " + D", hl.dsp.exec_cmd(spotlight))
-hl.bind(mainMod .. " + R", hl.dsp.exec_cmd(spotlight))
+hl.bind(mainMod .. " + M", hl.dsp.window.fullscreen({ mode = "maximized" }))
+hl.bind(mainMod .. " + F", hl.dsp.window.fullscreen({ mode = "fullscreen" }))
 -- Tap Super alone to toggle DMS spotlight; register Super+Space non-consuming so
 -- switching IME via fcitx5 does not trigger the Super release bind on key-up.
 hl.bind("SUPER + Super_L", hl.dsp.exec_cmd(spotlight), { release = true })
@@ -291,14 +290,27 @@ local shot = "hyprshot -o ~/Pictures/Screenshots -m "
 hl.bind("Print", hl.dsp.exec_cmd(shot .. "region"))
 hl.bind(mainMod .. " + Print", hl.dsp.exec_cmd(shot .. "window"))
 hl.bind("SHIFT + Print", hl.dsp.exec_cmd(shot .. "output"))
-hl.bind(mainMod .. " + P", hl.dsp.window.pseudo())
-hl.bind(mainMod .. " + J", hl.dsp.layout("togglesplit"))    -- dwindle only
+hl.bind(mainMod .. " + backslash", hl.dsp.layout("togglesplit")) -- dwindle only
 
--- Move focus with mainMod + arrow keys
+-- Move focus with mainMod + arrow keys or HJKL
 hl.bind(mainMod .. " + left",  hl.dsp.focus({ direction = "left" }))
 hl.bind(mainMod .. " + right", hl.dsp.focus({ direction = "right" }))
 hl.bind(mainMod .. " + up",    hl.dsp.focus({ direction = "up" }))
 hl.bind(mainMod .. " + down",  hl.dsp.focus({ direction = "down" }))
+hl.bind(mainMod .. " + H",     hl.dsp.focus({ direction = "left" }))
+hl.bind(mainMod .. " + L",     hl.dsp.focus({ direction = "right" }))
+hl.bind(mainMod .. " + K",     hl.dsp.focus({ direction = "up" }))
+hl.bind(mainMod .. " + J",     hl.dsp.focus({ direction = "down" }))
+
+-- Move window with mainMod + SHIFT + arrow keys or HJKL
+hl.bind(mainMod .. " + SHIFT + left",  hl.dsp.window.move({ direction = "left" }))
+hl.bind(mainMod .. " + SHIFT + right", hl.dsp.window.move({ direction = "right" }))
+hl.bind(mainMod .. " + SHIFT + up",    hl.dsp.window.move({ direction = "up" }))
+hl.bind(mainMod .. " + SHIFT + down",  hl.dsp.window.move({ direction = "down" }))
+hl.bind(mainMod .. " + SHIFT + H",     hl.dsp.window.move({ direction = "left" }))
+hl.bind(mainMod .. " + SHIFT + L",     hl.dsp.window.move({ direction = "right" }))
+hl.bind(mainMod .. " + SHIFT + K",     hl.dsp.window.move({ direction = "up" }))
+hl.bind(mainMod .. " + SHIFT + J",     hl.dsp.window.move({ direction = "down" }))
 
 -- Switch workspaces with mainMod + [0-9]
 -- Move active window to a workspace with mainMod + SHIFT + [0-9]
