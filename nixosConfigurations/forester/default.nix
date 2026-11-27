@@ -9,6 +9,18 @@
   kyaru.enable = true;
   kyaru.vps.enable = true;
 
+  users.users.yozakura = {
+    isNormalUser = true;
+    uid = 1002;
+    description = "Yozakura";
+    createHome = true;
+    homeMode = "0711";
+    shell = pkgs.nushell;
+    linger = true;
+    extraGroups = [ "wheel" ];
+  };
+  nix.settings.trusted-users = [ "yozakura" ];
+
   # UEFI boot
   boot.loader.systemd-boot.enable = true;
   boot.loader.grub.enable = false;

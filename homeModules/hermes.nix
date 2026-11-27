@@ -14,6 +14,12 @@ in
   options.services.hermes-gateway = with lib; {
     enable = mkEnableOption "Hermes Agent Gateway service";
 
+    autoStart = mkOption {
+      type = types.bool;
+      default = true;
+      description = "Whether hermes-gateway.service starts automatically with default.target.";
+    };
+
     package = mkOption {
       type = types.package;
       default = pkgs.kyaru.hermes-agent;
@@ -103,10 +109,11 @@ in
         Description = "Hermes Agent Gateway - Messaging Platform Integration";
         After = [ "network-online.target" ];
         Wants = [ "network-online.target" ];
+        ConditionPathExists = "!${cfg.hermesHome}/.migrated-away";
         StartLimitIntervalSec = 0;
       };
 
-      Install = {
+      Install = lib.mkIf cfg.autoStart {
         WantedBy = [ "default.target" ];
       };
 
