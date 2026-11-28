@@ -34,7 +34,12 @@ in
 
   config = lib.mkIf cfg.enable {
     home.sessionVariables = {
-      # NIXOS_OZONE_WL = 1;
+      NIXOS_OZONE_WL = "1";
+    };
+    # nushell login shells do not source hm-session-vars.sh for desktop launchers;
+    # environment.d feeds systemd --user, Plasma 6, and UWSM sessions directly.
+    systemd.user.sessionVariables = {
+      NIXOS_OZONE_WL = "1";
     };
     fonts.fontconfig.enable = true;
     # Drops what has no build for this platform (Edge and Spotify on aarch64).

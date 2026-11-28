@@ -75,6 +75,8 @@ in
         programs.firejail.enable = true;
         programs.firejail.wrappedBinaries = { };
 
+        environment.sessionVariables.NIXOS_OZONE_WL = "1";
+
         environment.systemPackages = with pkgs; [
           telegram-desktop
           librime
